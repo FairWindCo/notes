@@ -85,50 +85,54 @@ web:
     - "8000:80"  # host:container
 ```
 
+## Відкриття порту лище для пов'язаного сервісу не для хосту
 ## expose ports to linked services (not to host)
   expose: ["3000"]
 
-# Environment variables
+# Змінні оточення (Environment variables)
 
-## environment vars
+## Змінні оточення прямо в файлі 
 ```
   environment:
     RACK_ENV: development
   environment:
     - RACK_ENV=development
 ```
-## environment vars from file
+## Змінні оточення з зовнішнього файлу
 ```
   env_file: .env
   env_file: [.env, .development.env]
 ```
 
-# Commands
-## command to execute
+# Команди
+## команда що буде запущена в контейнері
 ```
   command: bundle exec thin -p 3000
   command: [bundle, exec, thin, -p, 3000]
 ```
-## override the entrypoint
+## Перезапис точки входу в контейнер
 ```
   entrypoint: /app/start.sh
   entrypoint: [php, -d, vendor/bin/phpunit]
 ```
 
-# Dependencies
-
+# Зв'язки (Dependencies)
+## відкриття сервсіу db під іменем хосту 'database'
 ## makes the `db` service available as the hostname `database` (implies depends_on)
 ```
   links:
     - db:database
     - redis
 ```
+
+## Вказівка на необхідність дочекатися запуску сервісу `db`
 ## make sure `db` is alive before starting
 ```
   depends_on:
     - db
 ```
 
+## вказівка впевнитися, що сервіс  `db` запущено та його ініціалізація була завершена без помилок
 ## make sure `db` is healty before starting and db-init completed without failure
 ```
   depends_on:
@@ -138,7 +142,7 @@ web:
       condition: service_completed_successfully
 ```
 
-# Advanced features
+# Додаткові можливості (Advanced features)
 ```
   Labels
   services:
