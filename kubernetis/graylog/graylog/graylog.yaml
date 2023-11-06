@@ -67,17 +67,17 @@ spec:
 #          value: https://logs.bs.local.erc/api
 #          value: http://graylog/api
         - name: GRAYLOG_PASSWORD_SECRET
-          value: QLKkYG8VwWtd9aEJ
+          value: xxxxx
         - name: GRAYLOG_ROOT_PASSWORD_SHA2
-          value: 9ec2acc7ebbc0b55f05d134533fe5a0906362831cf8af47f874ae267092a3f88
+          value: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
         - name: GRAYLOG_ELASTICSEARCH_HOSTS
-#          value: https://admin:admin@graylog-opensearch-cluster:9200
-          value: https://admin:6vEeu8QmyC3w1Tk@graylog-opensearch-cluster:9200
+#          value: https://admin_user:admin_pass@graylog-opensearch-cluster:9200
+          value: https://admin:xxxxxxxx@graylog-opensearch-cluster:9200
         - name: GRAYLOG_MONGODB_URI
 #          value: mongodb://my-user:8tdFxG333Pcy5AK@mdb0-svc:27017/graylog?authSource=admin
-#          value: mongodb://graylog-mongo-user:hsyPwuEnpVQTzXg@mdb0-svc:27017/graylog?retryWrites=true&w=majority&ReadPreference=primary&EnableReplicaSet=1
-#          value: mongodb://graylog-mongo-user:hsyPwuEnpVQTzXg@mdb0-0:27017,mdb0-1:27017,mdb0-2:27017/graylog?replicaSet=mdb0&retryWrites=true&w=majority
-          value: mongodb://graylog-mongo-user:hsyPwuEnpVQTzXg@mdb0-svc:27017/graylog?replicaSet=mdb0&retryWrites=true&w=majority
+#          value: mongodb://graylog-mongo-user:password@mdb0-svc:27017/graylog?retryWrites=true&w=majority&ReadPreference=primary&EnableReplicaSet=1
+#          value: mongodb://graylog-mongo-user:password@mdb0-0:27017,mdb0-1:27017,mdb0-2:27017/graylog?replicaSet=mdb0&retryWrites=true&w=majority
+          value: mongodb://graylog-mongo-user:password@mdb0-svc:27017/graylog?replicaSet=mdb0&retryWrites=true&w=majority
         - name: GRAYLOG_SERVER_JAVA_OPTS
           value: -Djavax.net.ssl.trustStore=/usr/share/graylog/cacerts
         - name: GRAYLOG_ROOT_TIMEZONE
