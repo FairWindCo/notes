@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: graylog-ingress
+  namespace: graylog
+  annotations:
+#    haproxy.org/load-balance: "leastconn"
+spec:
+  ingressClassName: haproxy
+  tls:
+  - secretName: graylog-tls-secret
+    hosts:
+    - "logs.bs.local.erc"
+  rules:
+  - host: "logs.bs.local.erc"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: graylog
+            port:
+              number: 9000
