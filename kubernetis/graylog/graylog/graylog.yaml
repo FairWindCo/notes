@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: graylog
+    role: backend-service
+  name: graylog
+  namespace: graylog
+spec:
+  type: LoadBalancer
+  ports:
+  - name: graylog-syslog-port
+    port: 1514
+    targetPort: 1514
+  - name: graylog-https-port
+    port: 9000
+    targetPort: 9000
+  - name: graylog-port
+    port: 12201
+    targetPort: 12201
+  - name: graylog-beats-port
+    port: 5044
+    targetPort: 5044
+  selector:
+    service: graylog
+    log-colector: "true"
+  externalIPs:
+  - 10.225.24.61
+  - 10.241.24.61
+  - 10.253.24.30
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  creationTimestamp: null
+  name: graylog
+  namespace: graylog
+spec:
+  replicas: 3
+  serviceName: graylog
+  selector:
+    matchLabels:
+      service: graylog
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        service: graylog
+        log-colector: "true"
+      annotations:
+        #"cni.projectcalico.org/ipAddrs": "[\"172.27.52.101\"]"
+        # cni.projectcalico.org/ipv4pools: '["graylog-pool"]'
+    spec:
+      volumes:
+        - name: http-cert
+          secret:
+            secretName: graylog-opensearch-cluster-http-cert
+        - name: https-tls
+          secret:
+            secretName: graylog-tls-secret
+      nodeSelector:
+        service: graylog
+      containers:
+      - env:
+#        - name: GRAYLOG_WEB_ENDPOINT_URI
+#          value: http://logs.bs.local.erc/api
+#          value: https://logs.bs.local.erc/api
+#          value: http://graylog/api
+        - name: GRAYLOG_PASSWORD_SECRET
+          value: QLKkYG8VwWtd9aEJ
+        - name: GRAYLOG_ROOT_PASSWORD_SHA2
+          value: 9ec2acc7ebbc0b55f05d134533fe5a0906362831cf8af47f874ae267092a3f88
+        - name: GRAYLOG_ELASTICSEARCH_HOSTS
+#          value: https://admin:admin@graylog-opensearch-cluster:9200
+          value: https://admin:6vEeu8QmyC3w1Tk@graylog-opensearch-cluster:9200
+        - name: GRAYLOG_MONGODB_URI
+#          value: mongodb://my-user:8tdFxG333Pcy5AK@mdb0-svc:27017/graylog?authSource=admin
+#          value: mongodb://graylog-mongo-user:hsyPwuEnpVQTzXg@mdb0-svc:27017/graylog?retryWrites=true&w=majority&ReadPreference=primary&EnableReplicaSet=1
+#          value: mongodb://graylog-mongo-user:hsyPwuEnpVQTzXg@mdb0-0:27017,mdb0-1:27017,mdb0-2:27017/graylog?replicaSet=mdb0&retryWrites=true&w=majority
+          value: mongodb://graylog-mongo-user:hsyPwuEnpVQTzXg@mdb0-svc:27017/graylog?replicaSet=mdb0&retryWrites=true&w=majority
+        - name: GRAYLOG_SERVER_JAVA_OPTS
+          value: -Djavax.net.ssl.trustStore=/usr/share/graylog/cacerts
+        - name: GRAYLOG_ROOT_TIMEZONE
+          value: "Europe/Kiev"
+          #http_enable_tls
+        - name: GRAYLOG_HTTP_ENABLE_TLS
+          value: "false"
+          #http_tls_key_file
+        - name: GRAYLOG_HTTP_TLS_KEY_FILE
+          value: "/etc/graylog/opensearch/tls/tls.key"
+          #http_tls_cert_file
+        - name: GRAYLOG_HTTP_TLS_CERT_FILE
+          value: "/etc/graylog/opensearch/tls/tls.crt"
+        image: graylog/graylog:5.1.5
+        name: graylog
+        command: 
+         - '/bin/bash'
+         - '-c'
+         - 'cp -a "${JAVA_HOME}/lib/security/cacerts" /usr/share/graylog/cacerts; keytool -importcert  -keystore /usr/share/graylog/cacerts -storepass changeit -noprompt -alias opensearch -file /etc/graylog/opensearch/ca.crt; keytool -importcert  -keystore /usr/share/graylog/cacerts -storepass changeit -noprompt -alias graylog -file /etc/graylog/opensearch/tls/tls.crt; tini -- /docker-entrypoint.sh'
+        ports:
+        - containerPort: 9000
+        - containerPort: 1514
+#        - containerPort: 1514/udp
+        - containerPort: 12201
+#        - containerPort: 12201/udp
+        - containerPort: 5044
+        resources: {}
+        volumeMounts:
+          - name: http-cert
+            readOnly: true
+            mountPath: "/etc/graylog/opensearch"
+          - name: https-tls
+            readOnly: true
+            mountPath: "/etc/graylog/opensearch/tls"
+          - name: graylog-data
+            mountPath: "/usr/share/graylog/data/journal"
+      restartPolicy: Always
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              service: graylog
+        - maxSkew: 4
+          topologyKey: service
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              service: graylog
+  volumeClaimTemplates:
+  - metadata:
+      name: graylog-data
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      storageClassName: "graylog-storage"
+      resources:
+        requests:
+          storage: 10Gi
+status: {}
