@@ -63,7 +63,7 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 для підключення інших робочіх нод використувуємо код що має такий вигляд:
 `kubeadm join <master-node-ip> --token <token> --discovery-token-ca-cert-hash sha256:<hash>`
 значення хещів та токенів зразу можна побачити після завершення розгортання головної ноди (прямо в виводі команди розгортання) або окремо запитувати про них кластер
-=============================================================================================
+
 
 Проте якщо зразу перевірити кластер то маємо такий стан:
 `kubectl get nodes`
@@ -352,7 +352,6 @@ service/kubernetes-dashboard  NodePort    xxx.xxx.xxx.xxx    <none>       9090:<
 
 
 ## Ingress Controller
-=========================================== Ingress Controller ==========================
 https://github.com/kubernetes/ingress-nginx/blob/main/docs/deploy/baremetal.md
 https://github.com/kubernetes/ingress-nginx
 
@@ -587,7 +586,6 @@ cd kubernetes/server/bin
 
 
 ## RBAC (Role Based Access Control)
-===================== RBAC (Role Based Access Control) ==============================
 Дозволяє обмежити доступ до ресурсів кластеру для користувачів або сервісних акаунтів
 
 В кастері є два типи ресурсів:
