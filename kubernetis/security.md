@@ -599,6 +599,7 @@ cd kubernetes/server/bin
    `kubectl api-resources --namespaced=false`
 
 Наприклад:
+```
 Namespaced			Non Namespaced
 -------------------------------------------------
 pods (po)                        nodes    (no)
@@ -607,7 +608,7 @@ secrets
 persistentvolumeclaim (pvc)      persistentvolumes (pv)
 roles                            clusterroles
 ......				 ......
-
+```
 
  Можна задавати набори прав
  - може редагувати поди (can edit pods)
