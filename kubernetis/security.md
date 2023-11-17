@@ -58,8 +58,6 @@ sudo chown $(id -u):$(id -g) $HOME/.kube/config
 `export KUBECONFIG=/etc/kubernetes/admin.conf`
 
 
-
---------------------
 для підключення інших робочіх нод використувуємо код що має такий вигляд:
 `kubeadm join <master-node-ip> --token <token> --discovery-token-ca-cert-hash sha256:<hash>`
 значення хещів та токенів зразу можна побачити після завершення розгортання головної ноди (прямо в виводі команди розгортання) або окремо запитувати про них кластер
