@@ -86,5 +86,6 @@ INSTALLED_APPS = [
 ]
 ```
 
+[За мотивами](https://stackoverflow.com/questions/1074212/how-can-i-see-the-raw-sql-queries-django-is-running)
 
 
