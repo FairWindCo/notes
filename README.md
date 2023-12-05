@@ -17,4 +17,4 @@ my notes on IT issues
 # Python
 - [Оновлення пакетів](https://github.com/FairWindCo/notes/blob/main/python/update_packeges.md)
 ## Django
-- (Логування запитів SQL)(https://github.com/FairWindCo/notes/blob/main/python/django/logging.md)
+- [Логування запитів SQL](https://github.com/FairWindCo/notes/blob/main/python/django/logging.md)
