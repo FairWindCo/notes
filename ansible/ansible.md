@@ -586,7 +586,7 @@ new_win1 ansible_host=10.225.24.47
   hosts: all
 
   tasks:
-  - block
+  - block:
     - name: install apache on RedHat
       yum:
         name: httpd
@@ -595,7 +595,7 @@ new_win1 ansible_host=10.225.24.47
       service: name=httpd state=started
     when: ansible_os_family == "RedHat"
 
-  - block
+  - block:
     - name: install apache on Debian
       apt:
         name: apache2
