@@ -119,3 +119,5 @@ pgbench -i
 pgbench -p 6432 -c 900 -C -T 60 -P 1
 ```
 Если все было сделано правильно, pgbench будет превосходно работать, а команда SHOW CLIENTS;, выполненная в админке PgBouncer, покажет 900 соединений. При этом вывод ps wuax | grep postgres покажет, что реально запущено лишь 20 бэкендов PostgreSQL.
+
+(see)[https://eax.me/pgbouncer/]
