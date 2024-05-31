@@ -30,6 +30,7 @@
   register: result
   failed_when: result.found != 1
 ```
+(lineinfile)[https://docs.ansible.com/ansible/latest/collections/ansible/builtin/lineinfile_module.html]
 
 ## Схожа повідінка до допомогою плагіна file.
 
@@ -100,6 +101,7 @@
           address 192.0.2.23
           netmask 255.255.255.0
 ```
+(blockinfile)[https://docs.ansible.com/ansible/latest/collections/ansible/builtin/blockinfile_module.html]
 
 # Перезавантаження серверу
 ## Перезавантаження сервера з очікуванням
@@ -333,3 +335,183 @@ dependencies:
     dest: /var/keys/nginx_signing.key
   register: aptkey
 ```
+
+# Виконання таску на визначеному сервері
+Код вказаний нижче виконає команду на вказанному сервері, та поверне результат виконання у змінну. 
+Параметр `run_once: true` вказує, що команда повинна виконатися лише один раз (навіть якщо плейбук виконується на кількох хостах, команда відпрацює лише на одному). delegate_to - вказує на машину де буде запущена команда. 
+```
+   - name: form join command
+     ansible.builtin.command: "kubeadm token create --print-join-command"
+     register: join_command
+#       remote_user: "{{ my_remote_user }}"
+     remote_user: admin_root
+     run_once: true
+     delegate_facts: true
+     delegate_to: "{{ kuber_master_server }}"
+```
+Примітка: без remote_user в моємо прикладі команді підключалася під іменем користувача ansible. Проте використати в якості користувача змінну не вдалося (виникає помилка, що змінної не існує. Тому можна лише явно прописати користувача.
+(tasts delegation)[https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_delegation.html
+(run once)[https://stackoverflow.com/questions/22070232/how-to-get-an-ansible-check-to-run-only-once-in-a-playbook]
+Крім того є ще можливість передати зібрані файти на відалений хост (замість збору нових яке відбудеться при підключенні), для цього слугує параметр delegate_facts
+## Виконання команд на ansible хості (локально)
+```
+в першому випадку просто відправляємо команду на 127.0.0.1
+- name: Take out of load balancer pool
+  ansible.builtin.command: /usr/bin/take_out_of_pool {{ inventory_hostname }}
+  delegate_to: 127.0.0.1
+```
+Але для цього варіанту є спеціальна версія команди
+```
+- name: Take out of load balancer pool
+  local_action: ansible.builtin.command /usr/bin/take_out_of_pool {{ inventory_hostname }}
+```
+
+# Копіювання локального файл (та встановлення прав)
+тут є цікавий момент, перше якщо буде не вказано `remote_src: yes` то в якості `src` буде виступати локальна папка на хості де працює сам ansible. Проте якщо параметр remote_src таки встановлено то тоді src це вже папка на хості де виконується скрипт. 
+Крім простого копіювання зразу встанолюються права на власника файлу.
+Спеціальні змінні застосовані для того, щоб вказати на користувача під яким виконується скрипт на відаленому сервері.
+```
+- name: Copy config for {{ ansible_facts.user_id }} kubectl
+  ansible.builtin.copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ ansible_facts.user_dir }}/.kube/config"
+    remote_src: yes
+    owner: "{{ ansible_facts.user_uid }}"
+    group: "{{ ansible_facts.user_gid }}"
+    mode: '0440'
+  become: yes
+```
+(команда copy)[https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html]
+
+# Встановлення кількох пакетів за раз
+Якщо треба поставити кілька пакетів то це можно зробити так:
+```
+- name: Install required packages
+  ansible.builtin.apt:
+    pkg:
+      - curl
+      - gnupg2
+      - software-properties-common
+      - apt-transport-https
+      - ca-certificates
+  become: yes
+```
+
+# Приклад як додати ключ репозіторію та репозіторій
+в мене був перший варінт видати команду шелу. Проте для себе почав використовувати інший варіант з скачуванням файла через команду get_url
+```
+- name: get containerd repository keyring
+#  ansible.builtin.shell: curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmour -o /etc/apt/trusted.gpg.d/docker.gpg
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/trusted.gpg.d/containerd.asc
+    mode: '0644'
+    force: true
+  become: yes
+```
+## Додавання самого репозиторію
+В мене був також варіант через шел (наведено в коменті)
+```
+- name: add containerd repository
+  ansible.builtin.apt_repository:
+    repo: deb https://download.docker.com/linux/ubuntu jammy stable
+    state: present
+    filename: containerd
+#  ansible.builtin.shell: add-apt-repository -y "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  become: yes
+```
+# Приклад ітерації по змінній
+(ітерації)[https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_loops.html]
+```
+- name: Show all the hosts in the current play
+  ansible.builtin.debug:
+    msg: "{{ item }}"
+  loop: "{{ ansible_play_batch }}"
+```
+сама змінна може бути задана так:
+```
+ansible_play_batch:
+  - item1
+  - item2
+```
+# Заміна строки в файлі 
+```
+- name: Change config for containerd
+  replace:
+    dest: /etc/containerd/config.toml
+    regexp: '[\s]*SystemdCgroup = false'
+    replace: '\n           SystemdCgroup = true'
+  tags: containerd-config
+```
+
+# Використання шаблона
+Тут шаблон http-proxy.conf.j2 перетворюэться на файл /etc/systemd/system/containerd.service.d/http-proxy.conf, і зразу встановлюються права та власник.
+Цей приклад взятий з ролі тому шаблон треба прозмістити в папці шаблонів.
+```
+- name: Setup proxy for containerd
+  template: src=http-proxy.conf.j2 dest=/etc/systemd/system/containerd.service.d/http-proxy.conf  mode=0644 owner=root
+```
+
+# Запуск та активація служби
+state: started - задає стан служби який необхідний. Крім started є ще інші статуси (restarted - перезапуск, stoped - завершено)
+enabled: true - вказує, що сервер буде запущено при старті системи
+```
+- name: Enable a timer unit for dnf-automatic
+  ansible.builtin.systemd_service:
+    name: containerd
+    state: started
+    enabled: true
+  become: yes
+```
+# Включити інші таски з іншого файлу
+тот є кілька цікавостей, по перше ця команда виконується при виконанні скрипту і фактично з додаванням when, можна пропустити додавання цих тасків
+```
+- name: Include Kubernetis
+  include_tasks: kubernetis.yaml
+```
+(include_tasks)[https://docs.ansible.com/ansible/2.9/modules/include_module.html]
+
+# Встановлення граничного часу виконання команди
+Для команди можна задати timeout якій вкаже скільки чекати до завершення команди поки команда не буде визнана такою що повалилася.
+(є глобальне значення а це значення для конкретної команди)
+```
+- name: create master node
+  ansible.builtin.shell: "kubeadm init --control-plane-endpoint={{ ansible_hostname }}.bs.local.erc --ignore-preflight-errors=Mem --pod-network-cidr={{ kuber_net }}"
+  timeout: 600
+  register: kubectlconfig
+```
+
+# Отримання інформації про користувача
+## через ansible_facts
+```
+- name: debug
+  debug:
+    msg: "{{ ansible_facts.user_id }}: {{ ansible_facts.user_uid }}:{{ ansible_facts.user_gid }}"
+```
+## через getent
+```
+- getent:
+  database: passwd
+- name: debug
+  debug:
+    msg: "{{ ansible_user }}: {{ getent_passwd[ansible_user].1 }}:{{ getent_passwd[ansible_user].2 }}"
+```
+## через виконання команд
+```
+- name: Execute id command
+  command: id -u {{ ansible_user }}
+  register: ansible_user_uid
+
+- name: Debug Ansible user UID
+  debug:
+    var: ansible_user_uid.stdout
+
+- name: Execute id command
+  command: id -g {{ ansible_user }}
+  register: ansible_user_gid
+
+- name: Debug Ansible user primary GID
+  debug:
+    var: ansible_user_gid.stdout
+```
+[https://www.laurivan.com/uid-and-gid-of-default-ansible-user/]
