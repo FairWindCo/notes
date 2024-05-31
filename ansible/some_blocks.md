@@ -515,3 +515,22 @@ enabled: true - вказує, що сервер буде запущено при
     var: ansible_user_gid.stdout
 ```
 [https://www.laurivan.com/uid-and-gid-of-default-ansible-user/]
+
+# Включити в плейбук ролі з вказівками змінних
+тут роль proxy задається зі значенням змінної no_proxy_server, яка отримає значення від змінної kuber_no_proxy_server
+Цікаве також задавання змінних оточення через блок environment. Також через ці змінні задаються параметри проксі сервера, а також виключення no_proxy.
+```
+- name: config time zone
+  hosts: creatio
+
+  environment:
+    http_proxy: "{{ http_proxy }}"
+    https_proxy: "{{ https_proxy }}"
+    no_proxy: "{{ kuber_no_proxy_server }}"
+    remote_user: admin_root
+
+  roles:
+    - role: proxy
+      no_proxy_server: "{{ kuber_no_proxy_server }}"
+    - role: kubernetis
+```
