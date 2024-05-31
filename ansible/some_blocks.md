@@ -534,3 +534,41 @@ enabled: true - вказує, що сервер буде запущено при
       no_proxy_server: "{{ kuber_no_proxy_server }}"
     - role: kubernetis
 ```
+# 
+```
+- name: Check if certificate file exists
+  stat: path=/etc/nginx/ssl/{{ sitename }}.pem
+  register: ssl_cert_check
+```
+`{% if ssl_cert_check.results[0].stat.exists %}`
+[https://stackoverflow.com/questions/41558116/ansible-register-variable-in-task-and-use-it-in-template]
+
+# Перевірка наявності файла чи каталога
+```
+- name: Task name
+  stat:
+    path: [path to the file or directory you want to check]
+  register: register_name
+```
+В такому випадку перевірка наявності буде мати вигляд
+```
+- name: Task name
+  debug:
+    msg: "The file or directory exists"
+  when: register_name.stat.exists
+```
+Якщо треба впевнитися що інсує саме файл
+```
+- name: Task name
+  debug:
+    msg: "The file or directory exists"
+  when: register_name.stat.exists and register_name.stat.isreg
+```
+Якщо треба впевнитися що інсує саме директорія
+```
+- name: Task name
+  debug:
+    msg: "The file or directory exists"
+  when: register_name.stat.exists and register_name.stat.isdir
+```
+[https://phoenixnap.com/kb/ansible-check-if-file-exists]
