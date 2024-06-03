@@ -596,7 +596,7 @@ cd kubernetes/server/bin
 
 Наприклад:
 ```
-Namespaced			Non Namespaced
+Namespaced (role)			Non Namespaced (cluster role)
 -------------------------------------------------
 pods (po)                        nodes    (no)
 services (svc)                   namespaces  (ns)
@@ -615,5 +615,529 @@ roles                            clusterroles
 ClusterRole\ClusterRoleBinding - застосовуються для всіх існуючих чи майбуніх просторів імен.
 Role\RoleBinding - застосовуються для всіх існуючих чи майбуніх ресурсів у вказаному просторі імен.
 
+## Створення ролі
+Роль, що буде створена в просторі імен prod буде називатися secret-manager, буде давати право виконувати операцію get на ресурсі secret:
+В другому прикладі бачимо можливість задати одразму кілька дозволених операцій.
+```
+kubectl -n prod create role secret-manager --verb=get --resource=secret
+kubectl -n prod create role secret-manager2 --verb=get --verb=list --resource=secret
+```
+Після чого треба прив'язати (RoleBinding) роль до користувача, зв'язуючи користувача test з роллю secret-manager:
+```
+kubectl -n prod create rolebinding secret-manager-bind --role=secret-manager --user=test
+```
 
+
+Розглянемо тестовий приклад:
+Ствоермо два простори імен prod та deploy
+- користувач test може лише дивитися секрет в просторі prod
+- користувач test може лише дивитися секрет та переглядати перелік секретів в просторі deploy
+- також перевіремо чи може користувач test виконувати відповідні дії (can-i)
+```
+kubectl create ns prod
+kubectl create ns deploy
+```
+В просторі prod  створюємо роль менеджер секретів
+`kubectl -n prod create role secret-manager --verb=get --resource=secrets`
+
+даємо цій ролі можливість виконувати команду get для ресупсів secrets
+
+Створюємо прив'язування ролі до користувача:
+`kubectl -n prod create rolebinding secret-manager --role=secret-manager --user=test`
+
+Тут створюється зв'зування з іменем secret-manager, де роль secret-manager прив'язується до користувача test
+
+В іншому просторі робимо аналогічну роль
+`kubectl -n deploy create role secret-manager --verb=get --verb=list --resource=secrets`
+
+та прив'язуємо роль до користувача тільки вже в цьому просторі імен
+`kubectl -n deploy create rolebinding secret-manager --role=secret-manager --user=test`
+
+## Тестування прав
+Існіє спеціальна команда яка каже чи може користувач виконати певні дії з певними об'єктами
+
+Чи можу я виконати дії у відповідних просторах:
+```
+kubectl auth can-i get secrets -n prod
+kubectl auth can-i get secrets -n deploy
+kubectl auth can-i list secrets -n prod
+kubectl auth can-i list secrets -n deploy
+```
+Чи може користувач тест виконати вибрані дії у відповідних просторах:
+```
+kubectl auth can-i get secrets -n prod --as test
+kubectl auth can-i get secrets -n deploy --as test
+kubectl auth can-i list secrets -n prod --as test
+kubectl auth can-i list secrets -n deploy --as test
+```
+Для перевірки своїх прав доступу ісує спеціальна команда:
+Перший варіант перевіряє чи можу я створювати поди у всіх просторах імен
+Другий варіант перевіряє чи може користувач test-user я бачити всі поді в протсорі імен test
+Третій варіант перевіряє чи можу я робити, що завгодно з чим завгодно в поточному просторі імен
+Четвертий варіант показує всі дозволені дії в просторі імен test
+```
+kubectl auth can-i create pods --all-namespaces
+kubectl auth can-i list pods -n test --as test-user
+kubectl auth can-i '*' '*'
+kubectl auth can-i --list --namespace=test
+```
+Інші корисні перевірки:
+Перевірка що я можу робити все, що завгодно з усіма обє'ктами в протсорі default
+`kubectl auth can-i '*' '*'`
+
+Перевірка що я можу робити все, що завгодно з секретами в протсорі default
+`kubectl auth can-i '*' secrets`
+
+Перевірка що я можу робити все, що завгодно з усіма обє'ктами в протсорі <name-space>
+`kubectl auth can-i '*' '*' -n <name-space>`
+
+Перевірка що я можу робити все, що завгодно з секретами в протсорі <name-space>
+`kubectl auth can-i '*' secrets -n <name-space>`
+
+Переглад всіх дозволів для вказаного простору <name-space>
+`kubectl auth can-i --list -n <name-space>`
+
+
+Розглянемо другий варіант, надамо корисувачу test право видаляти деплойменти у всіх простарах імен
+А користувачу new видяляти деплоймент лише в просторі danger
+```
+kubectl create clusterrole undeployment-role --verb=delete --resource=deployment
+kubectl create clusterrolebinding undeployment-role-test --clusterrole=undeployment-role --user=test
+
+kubectl create ns danger
+kubectl -n danger create rolebinding undeployment-role-test --clusterrole=undeployment-role --user=new
+
+
+kubectl auth can-i delete deployment --as test
+kubectl auth can-i delete deployment --as test -n prod
+kubectl auth can-i delete deployment --as test -n deploy
+kubectl auth can-i delete deployment --as test -n danger
+```
+
+і всюди буде відповідь yes
+`kubectl auth can-i delete deployment --as new -n danger`
+
+тут беде відповідь yes, а для інших запитів:
+```
+kubectl auth can-i delete deployment --as new
+kubectl auth can-i delete deployment --as new -n prod
+kubectl auth can-i delete deployment --as new -n deploy
+```
+відповідь буде no
+
+
+## Акаунти
+в кластері існує два типи акаунтів
+- сервісні акаунти,  найчастіше вокористовується машинами, такими як поди, для авторизації доступу до АРІ та зовнішніх сервісів. Самі такі севісні акаунти створюються, змінюються і видаляються через АРІ кубера;
+- та нормальні акаунти користувачів. (кожен з яких має свій секртифікат та ключ видані СА certificate authority кластера кубера, обов'язково сертифікат повинен мати CN (common name) в іменем користувача. За допомогою цих даних, можна виконувати команди в АРІ згідно з визначеними ролями.
+
+Для організації доуступу користувача створюємо ключ:
+`openssl genrsa -out intern.key 2048`
+
+він буде в файлі intern.key
+
+Далі створюємо CSR (Certificate Signing Request) — це ключ, який генерується при запиті на видачу сертифіката.
+
+`openssl req -new -key intern.key -out inter.csr`
+
+Майже всі поля заповнюємо за своїм роззудом, єдине, що важливо це значення яке ми запишемо в N (common name).
+В нашому прикладі ми назвемо кристувача intern
+
+Маємо два файли: inter.csr та intern.key
+Далі дивимося в документації:
+[https://kubernetes.io/docs/reference/access-authn-authz/certificate-signing-requests/#create-certificatessigningrequest]
+
+Переводимо вміст файлу inter.csr в base64, це можна зробити командою:
+`cat intern.csr | base64 -w 0`
+
+Створюємо файл csr.yaml:
+```
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: <ім'я користувача вказане в CN сертифікату>
+spec:
+  request: <вміст файлу csr  в форматі base64 взяте на попередньому кроці>
+  signerName: kubernetes.io/kube-apiserver-client
+  expirationSeconds: 86400  # це значення видалити, або встановити на потрыбний час
+  usages:
+  - client auth
+EOF
+```
+
+Файл матиме вигляд на зразок такого:
+```
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: intern
+spec:
+  request: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURSBSRVFVRVNULS0tLS0KTUlJQ1ZqQ0NBVDRDQVFBd0VURVBNQTBHQTFVRUF3d0dZVzVuWld4aE1JSUJJakFOQmdrcWhraUc5dzBCQVFFRgpBQU9DQVE4QU1JSUJDZ0tDQVFFQTByczhJTHRHdTYxakx2dHhWTTJSVlRWMDNHWlJTWWw0dWluVWo4RElaWjBOCnR2MUZtRVFSd3VoaUZsOFEzcWl0Qm0wMUFSMkNJVXBGd2ZzSjZ4MXF3ckJzVkhZbGlBNVhwRVpZM3ExcGswSDQKM3Z3aGJlK1o2MVNrVHF5SVBYUUwrTWM5T1Nsbm0xb0R2N0NtSkZNMUlMRVI3QTVGZnZKOEdFRjJ6dHBoaUlFMwpub1dtdHNZb3JuT2wzc2lHQ2ZGZzR4Zmd4eW8ybmlneFNVekl1bXNnVm9PM2ttT0x1RVF6cXpkakJ3TFJXbWlECklmMXBMWnoyalVnald4UkhCM1gyWnVVV1d1T09PZnpXM01LaE8ybHEvZi9DdS8wYk83c0x0MCt3U2ZMSU91TFcKcW90blZtRmxMMytqTy82WDNDKzBERHk5aUtwbXJjVDBnWGZLemE1dHJRSURBUUFCb0FBd0RRWUpLb1pJaHZjTgpBUUVMQlFBRGdnRUJBR05WdmVIOGR4ZzNvK21VeVRkbmFjVmQ1N24zSkExdnZEU1JWREkyQTZ1eXN3ZFp1L1BVCkkwZXpZWFV0RVNnSk1IRmQycVVNMjNuNVJsSXJ3R0xuUXFISUh5VStWWHhsdnZsRnpNOVpEWllSTmU3QlJvYXgKQVlEdUI5STZXT3FYbkFvczFqRmxNUG5NbFpqdU5kSGxpT1BjTU1oNndLaTZzZFhpVStHYTJ2RUVLY01jSVUyRgpvU2djUWdMYTk0aEpacGk3ZnNMdm1OQUxoT045UHdNMGM1dVJVejV4T0dGMUtCbWRSeEgvbUNOS2JKYjFRQm1HCkkwYitEUEdaTktXTU0xMzhIQXdoV0tkNjVoVHdYOWl4V3ZHMkh4TG1WQzg0L1BHT0tWQW9FNkpsYWFHdTlQVmkKdjlOSjVaZlZrcXdCd0hKbzZXdk9xVlA3SVFjZmg3d0drWm89Ci0tLS0tRU5EIENFUlRJRklDQVRFIFJFUVVFU1QtLS0tLQo=
+  signerName: kubernetes.io/kube-apiserver-client
+  expirationSeconds: 86400  # one day
+  usages:
+  - client auth
+```
+Застосовуємо його
+`kubectl apply -f csr.yaml`
+
+отримаємо відповідь:
+`certificatesigningrequest.certificates.k8s.io/myuser created`
+
+
+Далі дивимося запити:
+```
+kubectl get csr
+
+
+NAME      AGE   SIGNERNAME                                    REQUESTOR              CONDITION
+csr-kt8pj 47m kubernetes.io/kube-apiserver-client-kubelet system:bootstrap:24taq4 Approved,Issued
+intern    10s kubernetes.io/kube-apiserver-client         kubernetes-admin        Pending
+```
+
+Бачимо, що intern в статусі Pending
+Важливо розуміти, що в нашому випадку правильним іменем користувача має бути intern, бо це ім'я вказане при створенні запиту на сертифікат. В разі якщо, запит треба видалити, можна використати команду:
+`kubectl delete csr <ім'я користувача>`
+
+А для отриманання доступу запит треба підтвердити, це можна зробити командою:
+`kubectl certificate approve <ім'я користувача>`
+
+В нашому випадку це:
+`kubectl certificate approve intern`
+
+Після чого перевіряємо:
+```
+kubectl get csr
+
+NAME      AGE   SIGNERNAME                                    REQUESTOR              CONDITION
+csr-kt8pj 47m kubernetes.io/kube-apiserver-client-kubelet system:bootstrap:24taq4 Approved,Issued
+intern    10s kubernetes.io/kube-apiserver-client         kubernetes-admin        Approved,Issued
+```
+
+Маємо статус Approved,Issued - все добре
+
+Тепер треба дістати сам сертифікат:
+`kubectl get csr <ім'я користувача> -o yaml`
+
+Наприклад:
+`kubectl get csr intern -o yaml`
+
+
+тут ми побачимо значення 
+certificate: <код в base64> 
+
+це і буде значення сертифікату
+його треба перетворити на файл сертифікату, для цього копіюємо значення та вставляємо в команду:
+`echo <код в base64> | base64 -d >inter.crt`
+
+отримаємо файл intern.crt з сертифікатом
+
+Дивимося файл конфігурації кубернетіс
+```
+kubectl config view
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: DATA+OMITTED
+    server: https://<сервер>:6443
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    user: kubernetes-admin
+  name: kubernetes-admin@kubernetes
+current-context: kubernetes-admin@kubernetes
+kind: Config
+preferences: {}
+users:
+- name: kubernetes-admin
+  user:
+    client-certificate-data: DATA+OMITTED
+    client-key-data: DATA+OMITTED
+```
+Треба додати в конфігурацію новий ключ:
+
+`kubectl config set-credentials intern --client-key=intern.key --client-certificate==intern.crt --embed-certs`
+
+Тепер при виконанні команди:
+`kubectl config view`
+
+ми побачимо вже і нашого користувача
+
+Тепео плтрібно створити контекст:
+```
+kubectl config set-context intern --user=intern --cluster=kubernetes
+
+kubectl config view
+```
+ми побачимо вже і нашого користувача і новий контекст
+
+крім того наявні контексти можна побачити командою:
+`kubectl config get-contexts`
+
+Перемикання контексту командою
+`kubectl config use-context <ім'я контексту>`
+
+в нашому випадку
+`kubectl config use-context intern`
+
+Сервісни акаунти
+---------------------------------------------------------------------------------------------------
+Сервісни акаунти, вони завжди відносяться до якогось простору імен (за замовченням це default).
+Під кожний SA (сервіс акаунт) створюється сикрет який зберігає АРІ ключ, та який може бути використаний для взіємодії з сервісами кубернетіс.
+
+Подивитися ісуючи сервісни аканути та їх ключи можна за домопогою команди:
+`kubectl get sa,secrets`
+
+Наприклад маємо такий результат:
+```
+kubectl get sa,secrets
+NAME                     SECRETS   AGE
+serviceaccount/default   0         91d
+
+NAME                                             TYPE                DATA   AGE
+secret/haproxy-kubernetes-ingress-default-cert   kubernetes.io/tls   2      89d
+```
+Подивитися, що всередині ключа
+`kubectl describe secret <назва_ключа>`
+
+і там можна побачити токен
+
+можна створити власний сервісний акаунт:
+`kubectl create sa <ім'я акаунту>`
+
+Приклад:
+`kubectl create sa test`
+
+Тут ціково, бо за інформацією автоматично повинен бути створений і сикрет, що зберігає токен.
+Проте в випадку версії 1.28 цього автоматично не стається.
+
+Для створення токену слугує команда:
+`kubectl create token <сервісний акаунт>`
+
+Наприклад:
+`kubectl create token test`
+
+Версії Kubernetes до версії 1.22 автоматично створювали довгострокові облікові дані для доступу до API Kubernetes. Цей старіший механізм базувався на створенні маркерів Secrets, які потім можна було монтувати в запущені модулі. У новіших версіях, включаючи Kubernetes v1.29, облікові дані API отримують безпосередньо за допомогою API TokenRequest і монтуються в Pods за допомогою проектованого тому. Токени, отримані за допомогою цього методу, мають обмежений час життя та автоматично стають недійсними, коли видаляється Pod, до якого вони монтуються.
+
+Проте є можливість явно ствоити такий токен, за страим зарзком для цього застосовуємо деплоймент типу такого, де build-robot, це ім'я сервісного акаунту
+```
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: build-robot-secret
+  annotations:
+    kubernetes.io/service-account.name: build-robot
+type: kubernetes.io/service-account-token
+EOF
+```
+
+Перевірити такий сикрет можна:
+```
+kubectl get secret/build-robot-secret -o yaml
+```
+А подивитись токен, командою:
+```
+kubectl describe secrets/build-robot-secret
+```
+Сам по собі сервісний акаунт можна використати наступним чином:
+1. Створюємо деплоймент, командою
+`kubectl run test --image=nginx --dry-run=client -o yaml`
+
+яка на виході дає наступний вивід, що можна зберігти в файл:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test
+  name: test
+spec:
+  containers:
+  - image: nginx
+    name: test
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+Додаємо опис сервісного акаунту в специфікацію:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test
+  name: test
+spec:
+  serviceAccount: test
+  containers:
+  - image: nginx
+    name: test
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+
+тоді якщо застосувати:
+`kubectl apply -f `
+
+Якщо тепер підключитися в консоль поду, командою на зразок такої (де test - це ім'я пода):
+`kubectl exec -it test bash`
+
+в середині контейнера можливо побачити підмаунчену файлову систему: `mount | grep sec`
+```
+tmpfs on /run/secrets/kubernetis.io/serviceaccount type tmpfs (ro,relatime)
+```
+за цим шляхом "/run/secrets/kubernetis.io/serviceaccount" буде знаходитись сертифікат та токен доступу.
+Ці дані дозволяють отримувати доступ до АРІ кластеру, якщо всередині контейнеру виконати команду:
+`curl https://kubernetes -k`
+
+то отримаємо json відповідь де буде сказано, що анонімний користувач не має дуступу до АРІ кластеру (це тому, що був анонімний доступ).
+
+Для того, щоб мати авторизований доступ, потрібно взяти зміст файлу token з каталогу /run/secrets/kubernetis.io/serviceaccount та вставити його в команду:
+`curl https://kubernetes -k -H "Authorization: Bearer token_data"`
+
+в цьоу випадку система поверне відповідь, що доступу немає в сервісного акаунту з нашого простору імен. Далі потрібно налаштувати відповідний дсотуп для самого акаунту.
+
+Проте, часто не потрібно, щоб сервісний акаунт був постійно підключений до контейнеру, для цього слугує опція "automountServiceAccountToken: false", якщо змінити деплоймент наступним чином, то побачемо, що сервійний акаунт не буде замаунчений в середені контейнера. 
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test
+  name: test
+spec:
+  serviceAccount: test
+  automountServiceAccountToken: false
+  containers:
+  - image: nginx
+    name: test
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+Обмеження сервісних акаунтів за допомогою RBAC
+-------------------------------------------------
+
+По замовчуванню сервісний акаунт немає жодних прав.
+Перевирити це можна командою:
+
+`kubectl auth can-i delete secret --as system:serviceaccount:default:test`
+
+де default - це простір імен в якому розміщено сервісний акаунт, а test - це сервісний акаунт від імені якого йде первірка
+ця команда перевірить чи може сервісний акаунт test з простору імен default видаляти секрети.
+
+`kubectl create clusterrolebinding test-binding --clusterrole edit --serviceaccount default:test	`
+
+Ця команда призначить сервісному акаунту test з простору імен default - кластерну роль edit
+(перелік доступних ролей можна подивитися kubectl get clusterrole)
+
+
+
+Блокування\Розблокування анонімного доступу до кластеру
+--------------------------------------------------------
+Дивлячись на файл /etc/kubernetes/manifests/kube-apiserver.yaml
+можна побачити в розділі command аргументи запуску сервісу.
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint: 10.225.24.26:6443
+  creationTimestamp: null
+  labels:
+    component: kube-apiserver
+    tier: control-plane
+  name: kube-apiserver
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --advertise-address=10.225.24.26
+    - --allow-privileged=true
+    - --authorization-mode=Node,RBAC
+    - --client-ca-file=/etc/kubernetes/pki/ca.crt
+    - --enable-admission-plugins=NodeRestriction
+    - --enable-bootstrap-token-auth=true
+    - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+    - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+    - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+    - --etcd-servers=https://127.0.0.1:2379
+.......
+```
+
+Тут є аргумент --authorization-mode=Node,RBAC
+(параметри можуть бути й іншими)
+За замовчуванням якщо спробувати отримати доступ до АРІ кластеру то отримаємо помилку заборони анонімного доступу:
+`curl https://localhost:6443 -k`
+
+поверне json об'єкт:
+```
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:anonymous\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}
+```
+Де прямо сказано, що system:anonymous - намає доступу до АРІ.
+
+Якщо додати до команного рядка аргумент --anonymous-auth=false, то можна керувати доступом від анонімного користувача
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint: 10.225.24.26:6443
+  creationTimestamp: null
+  labels:
+    component: kube-apiserver
+    tier: control-plane
+  name: kube-apiserver
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --anonymous-auth=false
+    - --advertise-address=10.225.24.26
+    - --allow-privileged=true
+    - --authorization-mode=Node,RBAC
+    - --client-ca-file=/etc/kubernetes/pki/ca.crt
+    - --enable-admission-plugins=NodeRestriction
+    - --enable-bootstrap-token-auth=true
+    - --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt
+    - --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt
+    - --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key
+    - --etcd-servers=https://127.0.0.1:2379
+.....
+```
+Причому нічого не треба перезавантажувати а лише зачекати кілька хвилин. Тоді помилка зміниться на значення не авторизовано. Тобто анонімний користувач просто не взагалі не отримає доступ до АРІ кластеру.
+Перевіряємо: `curl https://localhost:6443 -k`
+Отримаємо відповідь.
+```
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "Unauthorized",
+  "reason": "Unauthorized",
+  "code": 401
+}
+```
+Проте значення --anonymous-auth=true, навпаки відкриває анонімний доступ до АРІ. Проте користувачу anonymous не надано прав, тому в цьому випадку йому просто буде заборонено доступ до функцій АРІ, але підключення до серверу буде дозволено.
 
