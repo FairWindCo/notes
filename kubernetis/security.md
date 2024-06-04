@@ -1295,6 +1295,141 @@ openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text
 
 Цей модуль доступу обмежує редагування об’єктів Node і Pod, які kubelet може змінювати. Щоб мати змогу редагувати вказані об'єкти з цим модулем доступу, kubelets має використовувати облікові дані в групі користувача пов'язаного з роллю типу system:nodes у формі system:node:<nodeName>. В такому випадку kubelets буде дозволено лише змінювати їхній власний об’єкт API Node і лише ті об’єкти API Pod, які прив’язані до їх вузла. kubelets не дозволено оновлювати або видаляти дані не зі свого об’єкта Node.
 (документація)[https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/]
+За замовченням цей плагін активований.
+Перевіримо його роботу, на робочій ноді перевіряємо:
+Дивимося конфігурацію підлючення:
+```
+kubectl config view
+```
+Якщо на ноді не налаштоване підлючення до АРІ серверу, то матимемо відповідь типу такої:
+```
+apiVersion: v1
+clusters: null
+contexts: null
+current-context: ""
+kind: Config
+preferences: {}
+users: null
+```
+Перевіряємо наявність файлу
+```
+cat /etc/kubernetes/kubelet.conf
+```
+Якщо він є і в вас користувач типу root, то можна створити змінну оточення:
+```
+export KUBECONFIG=/etc/kubernetes/kubelet.conf
+```
+Перевіряємо, команда для отриання пореліку нод
+```
+kubectl get nodes
+```
+якщо все гаразд до бачимо щось на зразок:
+```
+NAME            STATUS   ROLES           AGE    VERSION
+graylog0001     Ready    <none>          260d   v1.28.2
+graylog0101     Ready    <none>          260d   v1.28.2
+graylog0201     Ready    <none>          260d   v1.28.2
+kuber0101       Ready    control-plane   260d   v1.28.2
+kuber0201       Ready    control-plane   260d   v1.28.2
+mediawiki0101   Ready    <none>          260d   v1.28.2
+mediawiki0201   Ready    <none>          260d   v1.28.2
+```
+тепер намагаємося отримати перелік просторів імен
+```
+kubectl get ns
+```
+І тут бачимо таку помилку:
+```
+Error from server (Forbidden): namespaces is forbidden: User "system:node:graylog0001" cannot list resource "namespaces" in API group "" at the cluster scope
+```
+в нашому випадку робоча нода це graylog0001 і їй заборонено переглядати протори імен.
+Спробуємо поставити мітку на іншу ноду:
+```
+kubectl label node graylog0201 cks/test=yes
+```
+Теж отримуємо помилку, що нам це заборонено:
+```
+Error from server (Forbidden): nodes "graylog0201" is forbidden: node "graylog0001" is not allowed to modify node "graylog0201"
+```
+Крім цього заборонено навіть змінювати локальні мітки, що починаються з node-restrictions.kubernetes.io.
+```
+kubectl label node graylog0001 node-restrictions.kubernetes.io/test=yes
+Error from server (Forbidden): nodes "graylog0001" is forbidden: is not allowed to modify labels: node-restrictions.kubernetes.io/test
+```
+Цей модуль підвищує безпеку кластеру.
 
+# Оновлення кластеру
+Найчастіше є такі причини оновити кластер:
+- виправлення помилок
+- оновлення безпеки
+- необхідна специфічна версія для продукту, що використовується
+- необхідна підтримка певних функцій (останній реліз)
+
+  Версія сладається з трьох чисел major.minor.patch (наприклад 1.19.2 major=1, minor=19, patch=2).
+  minor - змінюється кожні три місяці.
+
+## алгоритм оновлення
+- в першу чергу оновлюються основні компоненти, а саме api-server, controller-manager, scheduller
+- в другу чергу робочі компоненти, а саме kubectl, kube-proxy
+всі компоненти повинні мати однакову minor версію з api-server (або на один реліз менше).
+
+## алгоритм оновлення ноди
+1. в першу чергу потрібно виконати команду:
+```
+kubectl drain <node>
+```
+яка безпечно прибере всі поди з вибраної ноди, а також заборонить розміщення нових подів.
+2. Після чого овновлюємо компоненти.
+3. А потім повертаємо ноду в роботу.
+```
+kubectl uncordon <node>
+```
+### Оновлення головної ноди
+1. зупиняємо її роботу
+Практично є певні особливості при оновленні головної ноди, можна отримати помилку, що її не можливо зупинити, щоб це обійти до команди додається --ignore-daemonsets. Якщо цю опцію не додати, то нода стане зі статусом Ready,SchedulingDisable. Тому для повної зупинки використовуємо:
+`kubectl drain <node> --ignore-daemonsets` і чекаємо її завершення.
+
+2. далі овновлюємо компоненти:
+apt install kubeadm=<ver> kubelet=<ver> kubectl=<ver>
+
+доступні версії можна побачити apt-cache show kubeadm | grep 1.20
+В пракладі припустимо в нас є кластер версії 1.19 то ми хочемо його оновити на 1.20, тому й шукаємо доступні версії.
+Виконуємо оновлення версій. Та перевіряємо встановлені версії.
+```
+kubeadm version
+```
+3. Виконуємо план оновлення
+```
+kubeadm upgrade plan
+```
+Далы в плані оновлення шукаємо команду 
+```
+kubeadm upgrade apply v<version>
+```
+
+
+### Оновлення робочьої ноди
+1. зупиняємо її роботу
+Практично є певні особливості при оновленні ноди, можна отримати помилку, що її не можливо зупинити, щоб це обійти до команди додається --ignore-daemonsets. Якщо цю опцію не додати, то нода стане зі статусом Ready,SchedulingDisable. Тому для повної зупинки використовуємо:
+`kubectl drain <node> --ignore-daemonsets` і чекаємо її завершення.
+
+2. далі овновлюємо компоненти:
+apt install kubeadm=<ver>
+
+доступні версії можна побачити apt-cache show kubeadm | grep 1.20
+В пракладі припустимо в нас є кластер версії 1.19 то ми хочемо його оновити на 1.20, тому й шукаємо доступні версії.
+Виконуємо оновлення версій. Та перевіряємо встановлені версії.
+```
+kubeadm version
+```
+3. Виконуємо оновлення
+```
+kubeadm upgrade тnode
+```
+4. далі овновлюємо компоненти:
+apt install kubelet=<ver> kubectl=<ver>
+
+Поновлюємо роботу всіх нод.
+Фактично головна нода залишається зупиненої, до поки не оновлені всі інші.
 
 
