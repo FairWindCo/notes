@@ -1424,7 +1424,7 @@ kubeadm version
 ```
 3. Виконуємо оновлення
 ```
-kubeadm upgrade тnode
+kubeadm upgrade node
 ```
 4. далі овновлюємо компоненти:
 apt install kubelet=<ver> kubectl=<ver>
