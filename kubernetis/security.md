@@ -1037,7 +1037,7 @@ status: {}
 `kubectl create clusterrolebinding test-binding --clusterrole edit --serviceaccount default:test	`
 
 Ця команда призначить сервісному акаунту test з простору імен default - кластерну роль edit
-(перелік доступних ролей можна подивитися kubectl get clusterrole)
+(перелік доступних ролей можна подивитися `kubectl get clusterrole`)
 
 
 
