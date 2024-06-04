@@ -740,7 +740,7 @@ kubectl auth can-i delete deployment --as new -n deploy
 
 `openssl req -new -key intern.key -out inter.csr`
 
-Майже всі поля заповнюємо за своїм роззудом, єдине, що важливо це значення яке ми запишемо в N (common name).
+Майже всі поля заповнюємо за своїм роззудом, єдине, що важливо це значення яке ми запишемо в CN (common name).
 В нашому прикладі ми назвемо кристувача intern
 
 Маємо два файли: inter.csr та intern.key
@@ -762,7 +762,6 @@ spec:
   expirationSeconds: 86400  # це значення видалити, або встановити на потрыбний час
   usages:
   - client auth
-EOF
 ```
 
 Файл матиме вигляд на зразок такого:
