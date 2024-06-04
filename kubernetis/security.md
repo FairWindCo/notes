@@ -1140,3 +1140,154 @@ spec:
 ```
 Проте значення --anonymous-auth=true, навпаки відкриває анонімний доступ до АРІ. Проте користувачу anonymous не надано прав, тому в цьому випадку йому просто буде заборонено доступ до функцій АРІ, але підключення до серверу буде дозволено.
 
+# Ручний доступ до API
+Переглянемо конфігурацію кластеру:
+`kubectl config view`
+
+ця команда видасть, щось на зразок цього:
+```
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: DATA+OMITTED
+    server: https://kuber0101.bs.local.erc:6443
+  name: kubernetes
+contexts:
+- context:
+    cluster: kubernetes
+    user: kubernetes-admin
+  name: kubernetes-admin@kubernetes
+current-context: kubernetes-admin@kubernetes
+kind: Config
+preferences: {}
+users:
+- name: kubernetes-admin
+  user:
+    client-certificate-data: DATA+OMITTED
+    client-key-data: DATA+OMITTED
+```
+Проте в цьому виводі замінені сертифікати, їх можна побачити вказавши параметр
+`kubectl config view --raw` - в цьому випадку ми будемо бачити закодовані в base64 сертифікати, наприклад:
+```
+kubectl config view --raw
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURCVENDQWUyZ0F3SUJBZ0lJSTc1RG8yczVVR3d3RFFZSktvWklodmNOQVFFTEJRQXdGVEVUTUJFR0ExVUUKQXhNS2EzVmlaWEp1WlhSbGN6QWVGdzB5TXpBNU1UZ3dOakEwTWpGYUZ3MHpNekE1TVRVd05qQTVNakZhTUJVeApFekFSQmdOVkJBTVRDbXQxWW1WeWJtVjBaWE13Z2dFaU1BMEdDU3FHU0liM0RRRUJBUVVBQTRJQkR3QXdnZ0VLCkFvSUJBUUNxekZiSzFWUFNrUmNaOUxQVmRsWEp2MHBVTlBCV0h1UnhiRjA3alpSQWNScFFMUGdkOGpabmthVEYKc1hRbUV2aXltU1psbnNGRmwwWmZIRThqRktReFNySTNUaHZTM0o3cVIyOWpZOC9WNFBEMkhEYTVpdXhzRWFZbgpwbjZ4QWt0akVNNXd6Tmd6eDlsSkEzb2xWckNWQkNXdk1ET1Z5VmQ4ZVpPbUFIY0FoZTBqcTVyQzNVaFJLVjdvCkZ2Q1NkKzlNUU51cHJEM2Q4OEhaSGJsZFVUeGxEZGUvVTFXenRYbGVLUkt6MzFhUXNKQU4vb1RtOFRyQi9yeHQKRkdWbmQxYW1rbEFNb2ttdTZaSmtyRjRMVE56RzMwMngrRmtTZ0NDdU1lTHpJa0tYVXFiWklKU2JKbkNJOHkwYQpqL1M1TUxPK3FVTzdLb2laN1AxTU9Ca2lBc0FOQWdNQkFBR2pXVEJYTUE0R0ExVWREd0VCL3dRRUF3SUNwREFQCkJnTlZIUk1CQWY4RUJUQURBUUgvTU
+.........
+```
+і це фактично буде те саме, що знаходиться в конфіг файлі: `~/.kube/config`, що використовується при доступі до кластеру.
+Ці сертифікати можна декодувати, командою: `echo <значення сетифікату> | base64 -d > <файл куди його зберігти>`
+В цьому конфігу зберігається CA сертифікат, сертифікат клієнта та його ключ (зазвичай файли ca, crt, key).
+Тепер до серверу можна спробувати підлючитися, командою:
+```
+curl https://<IP>:6443 --cacert <ca> --cert <crt> --key <key> 
+```
+Якзо все пішло гаразд ти ми отримаємо перелік URL які доступні на сервері.
+Проте без вказівки ca, crt, key - ми не отримаємо доступу до серверу.
+
+# Зовінішній доступ
+Переглянувши сервіси з простору за замовчуванням, ми побачимо існуючий сервіс kubernetes:
+```
+kubectl get svc
+
+NAME         TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   260d
+```
+Якщо його відредагувати: `kubectl edit svc`
+```
+kubectl edit svc
+
+apiVersion: v1
+kind: Service
+metadata:
+  creationTimestamp: "2023-09-18T06:10:06Z"
+  labels:
+    component: apiserver
+    provider: kubernetes
+  name: kubernetes
+  namespace: default
+  resourceVersion: "243"
+  uid: 0dab22b2-9f26-4aa0-bed4-ba5f7f33a3c8
+spec:
+  clusterIP: 10.96.0.1
+  clusterIPs:
+  - 10.96.0.1
+  internalTrafficPolicy: Cluster
+  ipFamilies:
+  - IPv4
+  ipFamilyPolicy: SingleStack
+  ports:
+  - name: https
+    port: 443
+    protocol: TCP
+    targetPort: 6443
+  sessionAffinity: None
+  type: ClusterIP
+status:
+  loadBalancer: {}
+```
+А саме змінити `type: ClusterIP` на `type: NodePort`.
+Після чього можемо перевірити, що опис сервіса змінився:
+```
+kubectl get svc
+
+NAME         TYPE       CLUSTER-IP   EXTERNAL-IP   PORT(S)         AGE
+kubernetes   NodePort   10.96.0.1    <none>        443:31947/TCP   260d
+```
+Далі пробуємо підлючитися до сервісу, де 10.241.24.26 адреса ноди, 31947 - порт, що можна побачити в описі:
+```
+curl https://10.241.24.26:31947 -k
+```
+Маємо відповідь, що анонімний доступ заборонений.
+```
+{
+  "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
+  "status": "Failure",
+  "message": "forbidden: User \"system:anonymous\" cannot get path \"/\"",
+  "reason": "Forbidden",
+  "details": {},
+  "code": 403
+}
+```
+І що головне, цей порт доступний на всіх нодах, що входять до кластеру.
+Тепер, якщо взати конфіг клієнта та зберігти його в файл:
+```
+kubectl config view --raw > test.conf
+```
+А потім замінити строку вигляду (точніше вказати інший порт):
+```
+    server: https://kuber0101.bs.local.erc:6443
+
+```
+На той порт що бачимо в описі сервісу
+```
+    server: https://kuber0101.bs.local.erc:31947
+
+```
+То можна використавши конфіг отримати доступ до серверу:
+```
+kubectl get nodes --kubeconfig test.conf
+```
+Проте при доступі з інших ІР адрес, нод, що входять в кластер, отримаємо помилку, що сертифікат не валідний "tls: failed to verify certificate: x509"
+Для того, що побачити для яких хостів був створений сертифікат, можна на головній ноді, можна виконати команду:
+```
+openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text
+```
+В частині, що наведена нижче, показаний опис, для яких хостів валідний сертифікат (частина виводу пропущена).
+```
+...
+            X509v3 Subject Alternative Name:
+                DNS:kuber0101, DNS:kuber0101.bs.local.erc, DNS:kubernetes, DNS:kubernetes.default, DNS:kubernetes.default.svc, DNS:kubernetes.default.svc.cluster.local, IP Address:10.96.0.1, IP Address:10.225.24.26
+...
+```
+Тут бачемо головне, що сертифікат валідний на імені kubernetes.
+Якщо в коніг прописати такий варіант:
+```
+    server: https://kubernetes:31947
+```
+А потім додати відповідний запис в hosts то можна отримамти доступ з будь якої ноди.
+
+
