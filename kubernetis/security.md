@@ -1290,4 +1290,11 @@ openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text
 ```
 А потім додати відповідний запис в hosts то можна отримамти доступ з будь якої ноди.
 
+# Обмеження редагування нод NodeRestriction
+Якщо в файл /etc/kubernetes/manifests/kube-apiserver.yaml, додати до аргументів запуску `--enable-admission-plugins=NodeRestriction`, то можна ввімкнути модуль контролю доступу до редагування міток нодів та подів, таким чином, що ви зможете редагувати лише локальні мітки.
+
+Цей модуль доступу обмежує редагування об’єктів Node і Pod, які kubelet може змінювати. Щоб мати змогу редагувати вказані об'єкти з цим модулем доступу, kubelets має використовувати облікові дані в групі користувача пов'язаного з роллю типу system:nodes у формі system:node:<nodeName>. В такому випадку kubelets буде дозволено лише змінювати їхній власний об’єкт API Node і лише ті об’єкти API Pod, які прив’язані до їх вузла. kubelets не дозволено оновлювати або видаляти дані не зі свого об’єкта Node.
+(документація)[https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/]
+
+
 
