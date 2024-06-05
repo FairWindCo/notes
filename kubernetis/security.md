@@ -1475,4 +1475,133 @@ kubectl -n graylog exec graylog-0 -- env
 kubectl -n graylog exec graylog-0 -- mount
 ```
 (концепція секретів)[https://kubernetes.io/docs/concepts/configuration/secret/]
+Щоб розыбратися в тому, що використовує образ докеру, потрібно виконати кілька дій.
+Знайти робочу ноду на якій запущений необхідниа нода. Для цього слугує наступна команда: 
+`kubectl -n graylog get pods -o wide`. Вона дає такий результат:
+```
+kubectl -n graylog get pods -o wide
+NAME               READY   STATUS      RESTARTS       AGE    IP               NODE            NOMINATED NODE READINESS GATES
+graylog-0          1/1     Running     0              18h    172.27.102.142   graylog0201     <none>           <none>
+graylog-1          1/1     Running     0              18h    172.27.50.213    graylog0101     <none>           <none>
+```
+Тут видно робочу ноду.
+Якщо перейти на робочу ноду то можна дізнатися які нотейнери там працюють (для докеру служить команда docker, а для containerd команда crictl):
+```
+crictl ps
+docker container ls
+```
+Вони дають результати схожі на ці:
+```
+CONTAINER           IMAGE             CREATED             STATE         NAME            ATTEMPT     POD ID              POD
+beb4e3ae72a2a       f6bb497cd9bd7    19 hours ago        Running       graylog          0           b6d3b84d9c8a1       graylog-2
+f6ffdc88fc28b       aacc2e9d283d5    25 hours ago        Running       opensearch       0           b34f42ba3a3cd       graylog-opensearch-cluster-masters-2
+```
+тут головне це перша колонка з ідентифікаторами контейнерів.
+Знаючи цей ідентифікатор можна подивитися опис контейнеру:
+```
+crictl inspect <ідентифікатор>
+docker inspect <ідентифікатор>
+```
+Ці команди виводать інформацію про структуру контейнеру, які змінні використовуються, які команди запускаються, які файлові системи монтуються.
+
+Всі секрети зберігаються всередині сервіса ETCD, взаємодія з ним відбувається через API SERVER, з яким безпосередньо зваємодіє сервіс KUBELET, який передає дані до DOCKER/CONTAINERD. ETCD та  API SERVER розміщені на головній ноді, а KUBELET та DOCKER на робочій.
+Таким чином цепочка взаємодії така: `DOCKER/CONTAINERD <--> KUBELET <--> API SERVER <--> ETCD`
+Існує спеціальний клієнт для etcd, його можна поставити командою:
+```
+apt install etcd-client
+```
+Якщо спробувати підключитися до клієнту:
+```
+etcdctl endpoint health
+
+{"level":"warn","ts":"2024-06-05T13:37:26.529+0300","caller":"clientv3/retry_interceptor.go:62","msg":"retrying of unary invoker failed","target":"endpoint://client-e87757f5-1f7c-4d55-910a-25722f779e2e/127.0.0.1:2379","attempt":0,"error":"rpc error: code = DeadlineExceeded desc = latest balancer error: all SubConns are in TransientFailure, latest connection error: connection closed"}
+127.0.0.1:2379 is unhealthy: failed to commit proposal: context deadline exceeded
+```
+Проте отримаємо помилку, бо в нас не має сертифікатів для підлючення. В якості необхідних ключів використаємо ключі від apiserver, які він і використовує для роботи з etcd. Тоді команда буде мати наступний вигляд:
+```
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key  /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt endpoint health
+
+127.0.0.1:2379 is healthy: successfully committed proposal: took = 29.487076ms
+```
+Маємо робочу відповідь.
+Тепер можна подивитися як зберігаються секрети в ETCD:
+```
+ETCDCTL_API=3 etcdctl --cert /etc/kubernetes/pki/apiserver-etcd-client.crt --key  /etc/kubernetes/pki/apiserver-etcd-client.key --cacert /etc/kubernetes/pki/etcd/ca.crt get /registry/secrets/default/secret2
+```
+Отримаємо приблизн таку відповідь:
+```
+/registry/secrets/default/secret2
+k8s
+
+
+v1Secret?
+?
+secret2?default"*$8d257411-a8c3-4298-9f36-2181c366ec8f2蹀??a
+kubectl-createUpdate?v蹀?FieldsV1:-
++{"f:data":{".":{},"f:pass":{}},"f:type":{}}B
+
+pass1234?Opaque?"
+```
+Але головний момент полягіє в тому, що ці данні зберігаються в незашифрованому вигляді. Тобто це загроза безпеки.
+Туму для захисту такої інформації можна примінити шифрування.
+(документація з цього приводу)[https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/]
+Створюємо конфігурацію для шифрування серкетів (опис взято з документації):
+Всього є два провайдери шифрування aescbc та identity. Тут потрібно обов'язково вставити пароль закодований в base64. Причому пароль повинен бути від 16 до 64 символів. Команда для кодування: `echo -n <пароль> | base64`
+```
+---
+apiVersion: apiserver.config.k8s.io/v1
+kind: EncryptionConfiguration
+resources:
+  - resources:
+      - secrets
+    providers:
+      - aescbc:
+          keys:
+            - name: key1
+              secret: <BASE 64 ENCODED SECRET>
+      - identity: {} # REMOVE THIS LINE
+```
+Створрюємо файл наприклад такий `/etc/kubernetes/etcd/enc.yaml` зі змістом наведеним вище, далі потрібно змінити налаштування /etc/kubernetes/manifests/kube-apiserver.yaml додати параметр `--encryption-provider-config=/etc/kubernetes/etcd/enc.yaml` в команду запуску, а також створити записи для volumeMounts та volumes, що будуть вказувати на каталог ді зберігається конфігурація провайдера шифрування.
+Вийде приблизно так:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    kubeadm.kubernetes.io/kube-apiserver.advertise-address.endpoint: 10.225.24.26:6443
+  creationTimestamp: null
+  labels:
+    component: kube-apiserver
+    tier: control-plane
+  name: kube-apiserver
+  namespace: kube-system
+spec:
+  containers:
+  - command:
+    - kube-apiserver
+    - --encryption-provider-config=/etc/kubernetes/etcd/enc.yaml
+    - --advertise-address=10.225.24.26
+    - --allow-privileged=true
+    - --authorization-mode=Node,RBAC
+......
+    volumeMounts:
+    - mountPath: /etc/kubernetes/etcd
+      name: etcd-enc
+      readOnly: true
+
+  volumes:
+  - hostPath:
+      path: /etc/kubernetes/etcd
+      type: DirectoryOrCreate
+    name: etcd-enc
+
+```
+Після зміни цього файлу, автоматично відбудеться перезагрузка сервісу та через кілька хвилин він стане доступним.
+Тепер якщо подивитися тепер то секрети будуть не закодовані. Кодуватися будуть лише нові секрети.
+Для того, щоб закодувати вже існуючи їх треба перестворити, це можна зробити командою:
+```
+kubectl get secrets -A -o yaml | kubectl replace -f -
+```
+Після чого все буде зашифровано.
+
 
