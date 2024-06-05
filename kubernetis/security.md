@@ -1588,13 +1588,13 @@ spec:
     - mountPath: /etc/kubernetes/etcd
       name: etcd-enc
       readOnly: true
-
+......
   volumes:
   - hostPath:
       path: /etc/kubernetes/etcd
       type: DirectoryOrCreate
     name: etcd-enc
-
+......
 ```
 Після зміни цього файлу, автоматично відбудеться перезагрузка сервісу та через кілька хвилин він стане доступним.
 Тепер якщо подивитися тепер то секрети будуть не закодовані. Кодуватися будуть лише нові секрети.
