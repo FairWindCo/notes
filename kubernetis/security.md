@@ -1390,7 +1390,7 @@ kubectl uncordon <node>
 `kubectl drain <node> --ignore-daemonsets` і чекаємо її завершення.
 
 2. далі овновлюємо компоненти:
-apt install kubeadm=<ver> kubelet=<ver> kubectl=<ver>
+`apt install kubeadm=<ver> kubelet=<ver> kubectl=<ver>`
 
 доступні версії можна побачити apt-cache show kubeadm | grep 1.20
 В пракладі припустимо в нас є кластер версії 1.19 то ми хочемо його оновити на 1.20, тому й шукаємо доступні версії.
@@ -1414,7 +1414,7 @@ kubeadm upgrade apply v<version>
 `kubectl drain <node> --ignore-daemonsets` і чекаємо її завершення.
 
 2. далі овновлюємо компоненти:
-apt install kubeadm=<ver>
+`apt install kubeadm=<ver>`
 
 доступні версії можна побачити apt-cache show kubeadm | grep 1.20
 В пракладі припустимо в нас є кластер версії 1.19 то ми хочемо його оновити на 1.20, тому й шукаємо доступні версії.
@@ -1427,9 +1427,52 @@ kubeadm version
 kubeadm upgrade node
 ```
 4. далі овновлюємо компоненти:
-apt install kubelet=<ver> kubectl=<ver>
+`apt install kubelet=<ver> kubectl=<ver>`
 
 Поновлюємо роботу всіх нод.
 Фактично головна нода залишається зупиненої, до поки не оновлені всі інші.
 
+# Секретні дані (паролі)
+Подивитися секрети, що існують в системі можна командою: `kubectl get secret`
+Створемо кілька секретів:
+```
+kubectl create secret generic secret1 --from-literal user=admin
+kubectl create secret generic secret2 --from-literal pass=1234
+kubectl create secret generic backend-user --from-literal=backend-username='backend-admin'
+```
+таку інформацію можна задіяти при створенні пода, в якості пристрою, що монтоється, для цього слугує такий опис:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  containers:
+  - name: mypod
+    image: redis
+    env:
+    - name: SECRET_USERNAME
+      valueFrom:
+        secretKeyRef:
+          name: backend-user
+          key: backend-username
+    volumeMounts:
+    - name: secret_mount
+      mountPath: "/etc/secret_file"
+      readOnly: true
+  volumes:
+  - name: secret_mount
+    secret:
+      secretName: secret1
+      optional: true
+```
+В цьому описі secret1, монтується в якості файлу /etc/secret_file. 
+Крім того, ще один засіб застосування секретів це передача секрета як змінну оточення. Створюється змінна SECRET_USERNAME з секрета backend-user, з ключа backend-username.
+Подивитися змінні, що передаються в середину поду, можна командою:
+`kubectl.exe exec <назва поду> -- env`, крім того можна подивитися всі змонтовані файлові системи `kubectl exec <назва поду> -- mount`
+```
+kubectl -n graylog exec graylog-0 -- env
+kubectl -n graylog exec graylog-0 -- mount
+```
+(концепція секретів)[https://kubernetes.io/docs/concepts/configuration/secret/]
 
