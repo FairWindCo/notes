@@ -1603,5 +1603,202 @@ spec:
 kubectl get secrets -A -o yaml | kubectl replace -f -
 ```
 Після чого все буде зашифровано.
+# RuntimeClass
+RuntimeClass - це фіча Kubernetes, яка дозволяє вказати рантайм контейнера для ваших робочих навантажень. За допомогою RuntimeClass можна вибирати між різними рантаймами контейнера або різними конфігураціями одного і того ж рантайму. Це корисно для безпеки, оскільки різні рантайми відрізняються за властивостями безпеки. Наприклад, ви можете використовувати легкий рантайм для деяких робочих навантажень, що потребують швидкого запуску, і більш безпечний рантайм (але з додатковими накладними витратами) для робочих навантажень, які потребують більш високого рівня ізоляції.
+Ще однією перевагою RuntimeClass є те, що він дозволяє перемикати рантайми без зміни робочих навантажень. Наприклад, якщо вам потрібно перейти на безпечніший рантайм, ви можете просто оновити RuntimeClass в маніфесті деплою робочого навантаження, і Kubernetes автоматично буде використовувати новий рантайм, пов'язаний з цим RuntimeClass.
+Загалом, RuntimeClass надає потужний інструмент для управління середовищем рантайму робочих навантажень Kubernetes, забезпечуючи підвищений контроль за безпекою та гнучкістю.
+(документація)[https://kubernetes.io/docs/concepts/containers/runtime-class/]
+Для активації RuntimeClass порібно виконати кілька дій:
+1. Активувати налаштування RuntimeClass
+   для containerd необідно додати в файл `/etc/containerd/config.toml` розділ `[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.${HANDLER_NAME}]`, в якому задаються налаштування.
+3. Створити маніфест RuntimeClass
+Створюємо файл такого змісту та приміняємо його на кластер
+```
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  # The name the RuntimeClass will be referenced by.
+  # RuntimeClass is a non-namespaced resource.
+  name: myclass 
+# The name of the corresponding CRI configuration
+handler: myconfiguration 
+```
+де myclass - це назва RuntimeClass, що ми створюємо, а myconfiguration - відповідна назва конфігурації (яка задана в конфігах)
+3. Задіяти відповідний RuntimeClass на подах
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mypod
+spec:
+  runtimeClassName: myclass
+  # ...
+```
+Задіюємо myclass при роботі даного пода.
 
+# Зміна користувача та групи під якими працює контейнер
+За замовченням контейнер запущений під користувачем 0 (root) та групою 0 (root). Це можна легко перевірити, якщо творити тестовий маніфест:
+```
+kubectl run test-pod --image=busybox --command -o yaml --dry-run=client > test-pod.yaml -- sh -c 'sleep 1d'
+```
+отримаємо приблизно такий маніфест:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test-pod
+  name: test-pod
+spec:
+  containers:
+  - command:
+    - sh
+    - -c
+    - '''sleep'
+    - 1d'
+    image: busybox
+    name: test-pod
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+Якщо його застосувати: `kubectl apply -f test-pod.yaml`, а потім підлючитися `kubectl exec it test-pod -- sh` або просто виконати команду:
+`kubectl exec -it test-pod -- id`, то отримаємо під яким користувачем працює контейнер, приблизно такі: `uid=0(root) gid=0(root) groups=10(wheel)`
+
+Це можна змінити, якщо додати в опис поду securityContext, як показано нижче:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test-pod
+  name: test-pod
+spec:
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 3000
+    fsGroup: 2000
+...
+```
+Тепер под буде працювати ід імені користувача `uid=1000 gid=3000 groups=2000`
+(контексти безпеки)[https://kubernetes.io/docs/tasks/configure-pod-container/security-context/]
+Іншим розділом де можна задати контекст безпеки є частина containers, по типу такого:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test-pod
+  name: test-pod
+spec:
+  containers:
+  - command:
+    - sh
+    - -c
+    - '''sleep'
+    - 1d'
+    image: busybox
+    securityContext:
+       runAsNonRoot: true
+    name: test-pod
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+Що головне, що ці параметри мають більший пріорітет ніж параметри на рівні поду, крім того тут доступні такіж самі значення runAsUser та runAsGroup.
+Крім того тут є додатковий параметр readOnlyRootFilesystem, що змонтує рутову файлову систему контейнеру в рижимі лише для читання. А параметр allowPrivilegeEscalation: false, введе заборону на отримання більших прав ніж у батьківського процесу.
+Цікаво, що якщо задеплоїти опис наведений вище, то контейнер не запуститься, з помилкою, що контейнер буде запущено не під рутом, а от сам образ повинен працювати під рутом.
+Проте навіть якщо под працює під користувачем root, то все одно всередині контейнеру немає доступу до встановлення змінниих я ядра, команди на зразок: `systemctl kernel.hostname=test`, отримаємо помилку, що файлова система в рижмі лише для читання. Для того, щоб це запрацювало потрібно додати такий контекст безпеки:
+```
+apiVersion: v1
+kind: Pod
+metadata:
+  creationTimestamp: null
+  labels:
+    run: test-pod
+  name: test-pod
+spec:
+  containers:
+  - command:
+    - sh
+    - -c
+    - '''sleep'
+    - 1d'
+    image: busybox
+    securityContext:
+       privileged: true
+       #allowPrivilegeEscalation: true
+    name: test-pod
+    resources: {}
+  dnsPolicy: ClusterFirst
+  restartPolicy: Always
+status: {}
+```
+В режимі privileged користвувач root в середині контейнеру точно відповідає root на сервері.
+
+## Глобальні політики безпеки
+Починаючи з версії 1.25, є маханізм глобальих обмежень, що вмикається шляхом встановлення спеціальних міток на рівні простору імен:
+(pod-security-admission)[https://kubernetes.io/docs/concepts/security/pod-security-admission/]
+існують дві спеціальні мітки:
+```
+# The per-mode level label indicates which policy level to apply for the mode.
+#
+# MODE must be one of `enforce`, `audit`, or `warn`.
+# LEVEL must be one of `privileged`, `baseline`, or `restricted`.
+pod-security.kubernetes.io/<MODE>: <LEVEL>
+
+# Optional: per-mode version label that can be used to pin the policy to the
+# version that shipped with a given Kubernetes minor version (for example v1.30).
+#
+# MODE must be one of `enforce`, `audit`, or `warn`.
+# VERSION must be a valid Kubernetes minor version, or `latest`.
+pod-security.kubernetes.io/<MODE>-version: <VERSION>
+```
+- enforce - Порушення політики призведуть до відхилення модуля.
+- audit - Порушення політики аудиту призведуть до додавання анотації аудиту до події, записаної в журналі аудиту, але в інших випадках допускаються.
+- warn - Порушення політики призведуть до попередження користувача, але в інших випадках це дозволено.
+- privileged - Політика Privileged Unrestricted, що забезпечує максимально широкий рівень дозволів. Ця політика дозволяє відомі ескалації привілеїв.
+- baseline - Базовий рівень Мінімально обмежувальна політика, яка запобігає відомим підвищенням привілеїв. Дозволяє стандартну (мінімально задану) конфігурацію Pod.
+- restricted - Обмежено Сильно обмежена політика, дотримуючись поточних передових методів зміцнення контейнерів.
+(налаштування)[https://kubernetes.io/docs/tasks/configure-pod-container/enforce-standards-admission-controller/#configure-the-admission-controller]
+```
+apiVersion: apiserver.config.k8s.io/v1
+kind: AdmissionConfiguration
+plugins:
+- name: PodSecurity
+  configuration:
+    apiVersion: pod-security.admission.config.k8s.io/v1 # see compatibility note
+    kind: PodSecurityConfiguration
+    # Defaults applied when a mode label is not set.
+    #
+    # Level label values must be one of:
+    # - "privileged" (default)
+    # - "baseline"
+    # - "restricted"
+    #
+    # Version label values must be one of:
+    # - "latest" (default) 
+    # - specific version like "v1.30"
+    defaults:
+      enforce: "privileged"
+      enforce-version: "latest"
+      audit: "privileged"
+      audit-version: "latest"
+      warn: "privileged"
+      warn-version: "latest"
+    exemptions:
+      # Array of authenticated usernames to exempt.
+      usernames: []
+      # Array of runtime class names to exempt.
+      runtimeClasses: []
+      # Array of namespaces to exempt.
+      namespaces: []
+```
+
+  
 
