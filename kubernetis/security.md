@@ -1824,5 +1824,107 @@ spec:
 # OPA (Open Policy Agent) системи політик
 Kubernetes має механізм інтегації систем політик, проте саму інструменти політик, які виконані яд двіжок політик, розробляються сторонніми організаціями.
 Policy engines (движки політики) – це потужний інструмент, який Kubernetes використовує для управління та застосування політик у всьому кластері. Двигуни політики дозволяють адміністраторам кластера налаштовувати та впроваджувати їх для широкого спектру дій, включаючи доступ до мережі, використання ресурсів та розміщення подів. Прикладами двигунів політики є Open Policy Agent (OPA) та Kyverno. 
+
 Kyverno - це двигун політики Kubernetes, який дозволяє застосовувати політики для ваших кластерів Kubernetes. За допомогою Kyverno ви можете створювати політики, що обмежують доступ до ресурсів, застосовують угоди про імена, що обмежують доступ до мережі тощо. Ви також можете визначити політики, які ініціюються за певних подій, наприклад, при створенні нового деплою. Коли відбувається порушення політики, Kyverno може вжити автоматичних дій для усунення проблеми, наприклад, заблокувати деплою або видалити під.
+
 Однією з переваг Kyverno є те, що він легко інтегрується з Kubernetes, тому ви можете визначати політики, використовуючи знайомі об'єкти Kubernetes, такі як ConfigMaps та CRD [Custom Resource Definition – спеціальний ресурс у Kubernetes, який дозволяє вносити будь-які дані]. Kyverno також підтримує можливість валідації та генерації політики, тому ви можете легко переконатися, що ваші політики працюють так, як очікується, та генерувати їх на основі існуючих ресурсів Kubernetes.
+## Встановлення OPA Gatekeeper
+Перша за все перевіряємо файл /etc/kubernetes/manifests/kube-apiserver.yaml, нас цікавить параметр `- --enable-admission-plugins=NodeRestriction`, тут не повинно бути жодних інших плагінів, крім NodeRestriction.
+(Gatekeeper)[https://open-policy-agent.github.io/gatekeeper/website/docs/install]
+Перед цим перевіряємо, що Ваш користувач має права адміністратора кластеру:
+```
+  kubectl create clusterrolebinding cluster-admin-binding \
+    --clusterrole cluster-admin \
+    --user <YOUR USER NAME>
+```
+Робимо деплой плагіну:
+```
+kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/v3.16.3/deploy/gatekeeper.yaml
+```
+Про всяк випадок, команда видалення:
+```
+kubectl delete -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/v3.16.3/deploy/gatekeeper.yaml
+```
+При встаноелнні плагіну буде створено спеціальні поди в просторі імен gatekeeper-system, а також сервіс gatekeeper-webhook-service.
+Інформацію стосовно різних плагінів керування доступом, можна знайти в документації (Dynamic Admission Control)[https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/]
+(Admission webhooks) Вебхуки доступу — це зворотні виклики HTTP, які отримують запити на доступ і виконують певні дії з ними. Ви можете визначити два типи веб-хуків доступу: перевіряючий веб-хук і змінюючий веб-хук. Першими викликаються веб-хуки, що змінюють доступ, і можуть змінювати об’єкти, надіслані на сервер API, щоб застосувати спеціальні параметри за замовчуванням. Після завершення всіх модифікацій об’єкта та перевірки вхідного об’єкта сервером API запускаються перевіряючі веб-перехоплювачі доступу, які можуть відхиляти запити на застосування спеціальних політик.
+
+Веб-хуки доступу, яким потрібно гарантувати, що вони бачать кінцевий стан об’єкта, щоб застосувати політику, повинні використовувати перевіряючий веб-хук доступу, оскільки об’єкти можуть бути змінені після того, як їх побачать веб-хуки, що змінюють.
+Створюємо шаблон політик безпеки:
+```
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8salwaysdeny
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sAlwaysDeny
+      validation:
+        # Schema for the `parameters` field
+        openAPIV3Schema:
+          type: object
+          properties:
+            message:
+              type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8salwaysdeny
+        violation[{"msg": msg}] {
+          1 > 0
+          msg := input.parameters.message
+        }
+```
+А потім створюємо політику, тут є специфічний момент в шаблоні задано ім'я K8sAlwaysDeny, політика має тип `kind: K8sAlwaysDeny`.
+```
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAlwaysDeny
+metadata:
+  name: pod-always-deny
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+  parameters:
+    messages: "ACCESS DENIED!"
+```
+Сама політика вибирає ресурс до якого вона буде застосована, та в данному випадку повідомлення яке буде видано при її застосуванні. В шаблоні прописана умова "1 > 0" - яка завжди виконується, тобто політка, що завжди застосована. Якщо змінити умову на "2 > 1", то отримаємо паолітику, що не буде застосована взагалі, тобто отримаємо шаблон завжди дозволено.
+Перевірити шаблони та обмеження можна перевірити командами:
+```
+kubectl get constrainttemplates
+kubectl get <ConstraintTemplate name>
+kubectl get constraints
+```
+При застосуванні описаних вище шаблонів та політик, буль яка спроба створити под, буде заборонена.
+Якщо трохи змінити частину перевірки умов, то можна оримати політику, що вимагає при створенні об'єкту задавати обов'яскові імена.
+```
+      rego: |
+        package k8srequiredlabels
+
+        violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+          provided := {label | input.review.object.metadata.labels[label]}
+          required := {label | label := input.parameters.labels[_]}
+          missing := required - provided
+          count(missing) > 0
+          msg := sprintf("you must provide labels: %v", [missing])
+        }
+```
+А якщо створити таку поітику:
+```
+metadata:
+  name: ns-must-have-gk
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Namespace"]
+  parameters:
+    # Note that "labels" is now an array item, rather than an object
+    - labels: ["gatekeeper"]
+```
+Така політика вимагає, щоб кожний простір імен який створюється обов'язово мав мітку gatekeeper.
+(Документація)[https://open-policy-agent.github.io/gatekeeper/website/docs/]
+
