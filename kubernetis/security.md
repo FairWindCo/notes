@@ -1928,3 +1928,74 @@ spec:
 Така політика вимагає, щоб кожний простір імен який створюється обов'язово мав мітку gatekeeper.
 (Документація)[https://open-policy-agent.github.io/gatekeeper/website/docs/]
 
+# Зменщення розмірів образів
+Створемо тестовий контейнер, для цього запишемо такий файл Dockerfile:
+```
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+CMD ["./app"]
+```
+Поруч створемо файл app.go, що містить таку тестову програме на ГО.
+```
+package main
+
+import {
+   "fmt"
+   "time"
+   "os/user"
+}
+
+func main () {
+   user, err := user.Current()
+   if err != nil {
+     panic(err)
+   }
+
+   for {
+       fmt.Println("user: " + user.Username + " id: " + user.Uid)
+       time.Sleep(1 * time.Second)
+   }
+}
+```
+Якщо зібрати такий образ командою `docker build -t app .`, то в результаті отримаємо образ майже 700Мб розміром. (Розмір можна побачити командою `docker image ls`). Проте якщо змінити Dockerfile:
+```
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+
+FROM alpine
+COPY --from=0 /app .
+CMD ["./app"]
+```
+В такому випадку ми переходимо до побудову образу кількома стадіями. Спочатку створюється тимчасовий образ на першій стадії, а потім на другій стадії використовується маленький образ в який командою `COPY --from=0 /app .` переноситься пободований бінарний файл, а темчасовий образ потім видаляється. В результаті результуючий образ буде приблизно 8Мб. Таким чином значно зменшеться місце яке він займає на диску.
+Змінемо трохи опис образу:
+```
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+
+FROM alpine:3.14.2
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser
+RUN chmod a-w /etc
+RUN rm -rf /bin/*
+COPY --from=0 /app /home/appuser
+USER appuser
+CMD ["./app"]
+```
+Тут треба звернути на кілька моментів: 
+- для образу задано версію базового образу, що дозволяє точно забезпечити все необхідне, щоб потім не було несподіванки.
+- перша команда RUN, що виконується при побудові образу, створює користувача.
+- команда USER змінює поточного користувача на вказанного (до цього всі дії виконувалися під рутом), таким чином программа буде виконана з правами користувача appuser.
+- крім того тут додана команда друга команда RUN, що відміняє дсотуп всік користувачів крім root, на запис в каталог /etc
+- третя команда RUN видаляє всі бінарні утиліти з каталога /bin, а тому числі і шел sh. Що не дозволить підлючитися до контецнеру в режимі шелу. Це підвищує безпеку контейнеру, так як прибирає не потрібні утиліти, які можуть бути використані при взломі контейнеру.
+
+
+
+
