@@ -1821,6 +1821,74 @@ spec:
       capabilities:
         add: ["NET_ADMIN", "SYS_TIME"]
 ```
+# Зменщення розмірів образів
+Створемо тестовий контейнер, для цього запишемо такий файл Dockerfile:
+```
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+CMD ["./app"]
+```
+Поруч створемо файл app.go, що містить таку тестову програме на ГО.
+```
+package main
+
+import {
+   "fmt"
+   "time"
+   "os/user"
+}
+
+func main () {
+   user, err := user.Current()
+   if err != nil {
+     panic(err)
+   }
+
+   for {
+       fmt.Println("user: " + user.Username + " id: " + user.Uid)
+       time.Sleep(1 * time.Second)
+   }
+}
+```
+Якщо зібрати такий образ командою `docker build -t app .`, то в результаті отримаємо образ майже 700Мб розміром. (Розмір можна побачити командою `docker image ls`). Проте якщо змінити Dockerfile:
+```
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+
+FROM alpine
+COPY --from=0 /app .
+CMD ["./app"]
+```
+В такому випадку ми переходимо до побудову образу кількома стадіями. Спочатку створюється тимчасовий образ на першій стадії, а потім на другій стадії використовується маленький образ в який командою `COPY --from=0 /app .` переноситься пободований бінарний файл, а темчасовий образ потім видаляється. В результаті результуючий образ буде приблизно 8Мб. Таким чином значно зменшеться місце яке він займає на диску.
+Змінемо трохи опис образу:
+```
+FROM ubuntu
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y golang-go
+COPY app.go .
+RUN CGO_ENABLED=0 go build app.go
+
+FROM alpine:3.14.2
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser
+RUN chmod a-w /etc
+RUN rm -rf /bin/*
+COPY --from=0 /app /home/appuser
+USER appuser
+CMD ["./app"]
+```
+Тут треба звернути на кілька моментів: 
+- для образу задано версію базового образу, що дозволяє точно забезпечити все необхідне, щоб потім не було несподіванки.
+- перша команда RUN, що виконується при побудові образу, створює користувача.
+- команда USER змінює поточного користувача на вказанного (до цього всі дії виконувалися під рутом), таким чином программа буде виконана з правами користувача appuser.
+- крім того тут додана команда друга команда RUN, що відміняє дсотуп всік користувачів крім root, на запис в каталог /etc
+- третя команда RUN видаляє всі бінарні утиліти з каталога /bin, а тому числі і шел sh. Що не дозволить підлючитися до контецнеру в режимі шелу. Це підвищує безпеку контейнеру, так як прибирає не потрібні утиліти, які можуть бути використані при взломі контейнеру.
+
 # OPA (Open Policy Agent) системи політик
 Kubernetes має механізм інтегації систем політик, проте саму інструменти політик, які виконані яд двіжок політик, розробляються сторонніми організаціями.
 Policy engines (движки політики) – це потужний інструмент, який Kubernetes використовує для управління та застосування політик у всьому кластері. Двигуни політики дозволяють адміністраторам кластера налаштовувати та впроваджувати їх для широкого спектру дій, включаючи доступ до мережі, використання ресурсів та розміщення подів. Прикладами двигунів політики є Open Policy Agent (OPA) та Kyverno. 
@@ -1928,74 +1996,65 @@ spec:
 Така політика вимагає, щоб кожний простір імен який створюється обов'язово мав мітку gatekeeper.
 (Документація)[https://open-policy-agent.github.io/gatekeeper/website/docs/]
 
-# Зменщення розмірів образів
-Створемо тестовий контейнер, для цього запишемо такий файл Dockerfile:
-```
-FROM ubuntu
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y golang-go
-COPY app.go .
-RUN CGO_ENABLED=0 go build app.go
-CMD ["./app"]
-```
-Поруч створемо файл app.go, що містить таку тестову програме на ГО.
+
+# засіб аналізу файлів розгортаньKubeSec.IO
+Спеціалізованний інстурмент для аналізу безпеки деплоймент файлів (KubeSec)[https://kubesec.io/]. Якщо його встановити в якості утиліти чи контейнеру, то за його допомогою можна аналізувати файли перед їх деплоєм на загально прийняти норми безпеки.
+Наприклад якщо скачати утиліту і запустити її `kubesec scan k8s-deployment.yaml`, то можна отримати рекомендації по покращеннб безпеки, наприлад додавання таких параметрів як запуск в не рутовому оточені, встановленні обмежень по пам'яті і т.п.
+Крім того його можна запустити прямо з докеру:`docker run -i kubesec/kubesec:512c5e0 scan /dev/stdin < file_name_to_scan`
+
+# Засіб тестування ConfTest
+Фремворк для тестування (ConfTest)[https://www.conftest.dev/] дозволяє розробити власні правиала аналізу файлів розгортань та перевіряти їх.
+Наприклад ось такий тестовий набір який збірігіють в файл policy/deployment.rego, важливо розмістити в папку policy:
 ```
 package main
 
-import {
-   "fmt"
-   "time"
-   "os/user"
+deny[msg] {
+  input.kind == "Deployment"
+  not input.spec.template.spec.securityContext.runAsNonRoot
+
+  msg := "Containers must not run as root"
 }
 
-func main () {
-   user, err := user.Current()
-   if err != nil {
-     panic(err)
-   }
+deny[msg] {
+  input.kind == "Deployment"
+  not input.spec.selector.matchLabels.app
 
-   for {
-       fmt.Println("user: " + user.Username + " id: " + user.Uid)
-       time.Sleep(1 * time.Second)
-   }
+  msg := "Containers must provide app label for pod selectors"
 }
 ```
-Якщо зібрати такий образ командою `docker build -t app .`, то в результаті отримаємо образ майже 700Мб розміром. (Розмір можна побачити командою `docker image ls`). Проте якщо змінити Dockerfile:
+Буде перевіряти що всі розгортання типу Deployment (в правилах за це відповідають такі елементи `input.kind == "Deployment"`) повинні мати обов'язково вказівку запуску в не рут оточенні та обов'язково проставлену мітку app (ща це відповідає частина `not input.spec.template.spec.securityContext.runAsNonRoot` та  `not input.spec.selector.matchLabels.app`).
+Для запуску можна використати ось такий визов докера:
 ```
-FROM ubuntu
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y golang-go
-COPY app.go .
-RUN CGO_ENABLED=0 go build app.go
-
-FROM alpine
-COPY --from=0 /app .
-CMD ["./app"]
+docker run --rm -v $(pwd):/project openpolicyagent/conftest test <deployemnt for test.yaml>
 ```
-В такому випадку ми переходимо до побудову образу кількома стадіями. Спочатку створюється тимчасовий образ на першій стадії, а потім на другій стадії використовується маленький образ в який командою `COPY --from=0 /app .` переноситься пободований бінарний файл, а темчасовий образ потім видаляється. В результаті результуючий образ буде приблизно 8Мб. Таким чином значно зменшеться місце яке він займає на диску.
-Змінемо трохи опис образу:
+В результаті файл `<deployemnt for test.yaml>` буде первірений і поньому будуть видані результати перевірки.
+Крім тестування файлів розгортань, можна тесувати також докерфайли:
 ```
-FROM ubuntu
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y golang-go
-COPY app.go .
-RUN CGO_ENABLED=0 go build app.go
-
-FROM alpine:3.14.2
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup -h /home/appuser
-RUN chmod a-w /etc
-RUN rm -rf /bin/*
-COPY --from=0 /app /home/appuser
-USER appuser
-CMD ["./app"]
+docker run --rm -v $(pwd):/project openpolicyagent/conftest test Dockerfile --all-namespaces
 ```
-Тут треба звернути на кілька моментів: 
-- для образу задано версію базового образу, що дозволяє точно забезпечити все необхідне, щоб потім не було несподіванки.
-- перша команда RUN, що виконується при побудові образу, створює користувача.
-- команда USER змінює поточного користувача на вказанного (до цього всі дії виконувалися під рутом), таким чином программа буде виконана з правами користувача appuser.
-- крім того тут додана команда друга команда RUN, що відміняє дсотуп всік користувачів крім root, на запис в каталог /etc
-- третя команда RUN видаляє всі бінарні утиліти з каталога /bin, а тому числі і шел sh. Що не дозволить підлючитися до контецнеру в режимі шелу. Це підвищує безпеку контейнеру, так як прибирає не потрібні утиліти, які можуть бути використані при взломі контейнеру.
-
-
+# утиліта Trivy
+Ще одна утиліта перевірки стану контейнерів (документація)[https://aquasecurity.github.io/trivy/v0.52/]. Trivy — комплексний і універсальний сканер безпеки. Trivy має сканери, які шукають проблеми з безпекою, і показує місця, де вони вони можуть виникнути.
+Використати можна таким чином:
+```
+docker run aquasec/trivy image <test_image>
+docker run aquasec/trivy image nginx
+docker run aquasec/trivy image nginx:alpine
+```
+По результатам команди буде виконана перевірка образу, та виведена таблиця з проблемами. Вище представлено дві команди тестування nginx, перша виведе багато попереджень про безпеку, інша навпаки nginx:alpine.
+Таким чином можна перевірити і сам кубернетіс.
+Наприклад можна побачити всі поди кластеру командою:
+```
+kubectl get pods --all-namespaces
+```
+Потім можна побачити з чього складаєтться под:
+```
+kubectl describe pod kube-apiserver-master -n kube-system
+```
+А потім перевірити конкретний образ:
+```
+docker run aquasec/trivy image k8s.gcr.io/kube-apiserver:v1.21.0
+```
+таким чином перевіряємо ключьові компоненти на безпеку.
+# цифрові відбитки образів
 
 
