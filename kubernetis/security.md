@@ -2057,3 +2057,92 @@ docker run aquasec/trivy image k8s.gcr.io/kube-apiserver:v1.21.0
 ```
 таким чином перевіряємо ключьові компоненти на безпеку.
 # цифрові відбитки образів
+Використання версії в якості вказання необхідного образу є гарною практикою, проте не найбільш безпечною.
+
+Дізнаємося які образи використовуються всередині нашого кластеру:
+kubectl get pods -A -o yaml | grep image
+команда виведе, щось типу такого:
+```
+...
+  image: docker.io/calico/apiserver:v3.29.0
+      imagePullPolicy: IfNotPresent
+      image: docker.io/calico/apiserver:v3.29.0
+      imageID: docker.io/calico/apiserver@sha256:69c1300756468b8bcdd64f600c50c11a741012c699a4768756345d0ae5dc9310
+      image: docker.io/calico/apiserver:v3.29.0
+      imagePullPolicy: IfNotPresent
+      image: docker.io/calico/apiserver:v3.29.0
+      imageID: docker.io/calico/apiserver@sha256:69c1300756468b8bcdd64f600c50c11a741012c699a4768756345d0ae5dc9310
+      image: docker.io/calico/kube-controllers:v3.29.0
+      imagePullPolicy: IfNotPresent
+      image: docker.io/calico/kube-controllers:v3.29.0
+      imageID: docker.io/calico/kube-controllers@sha256:ba3ef20f30caa855ddf00e767af973685832546582e7fa457dac14c64d3156d0
+      image: docker.io/calico/node:v3.29.0
+...
+```
+де частина   imageID: docker.io/calico/kube-controllers@sha256:ba3ef20f30caa855ddf00e767af973685832546582e7fa457dac14c64d3156d0 вказує на конкретний образ на машині (тут від нього вказано цифровий відбиток)
+
+Якщо подивитися опис будь якого поду `kubectl describe pod kube-apiserver -n kube-syste` то можна помітити таку частину:
+```
+Containers:
+  kube-apiserver:
+    Container ID:  containerd://d366a5c52ec267d16b2fad7515827770799ddcc6bca9545118fe0ef23b247c45
+    Image:         registry.k8s.io/kube-apiserver:v1.31.2
+    Image ID:      registry.k8s.io/kube-apiserver@sha256:9d12daaedff9677744993f247bfbe4950f3da8cfd38179b3c59ec66dc81dfbe0
+```
+І ост ця частина registry.k8s.io/kube-apiserver@sha256:9d12daaedff9677744993f247bfbe4950f3da8cfd38179b3c59ec66dc81dfbe0 – вказує на конкретний образ з потрібним хешем. Цей код може бути використано в якості версії образу.
+
+А також може бути використано навіть для конфігурацій самого кубернетісу, наприклад маніфест /etc/kubernetes/manifests/kube-apiserver.yaml містить наступні рядки:
+```
+    image: registry.k8s.io/kube-apiserver:v1.31.2
+    imagePullPolicy: IfNotPresent
+```
+їх можна замінити на 
+```
+    image: registry.k8s.io/kube-apiserver@sha256:9d12daaedff9677744993f247bfbe4950f3da8cfd38179b3c59ec66dc81dfbe0
+    imagePullPolicy: IfNotPresent
+```
+тоді кластер перезапуститься і буде працювати лише з цим образом і ніяким іншим.
+Крім того ці відбитки можна використовувати в якості вказівки на образи в файлах деплойментах.
+
+## Обмеження на використання образів. 
+Для системи Gatekeeper можна створити обмеження на дозволені образи в середині кластеру.
+Ось приклад такого обмеження k8strustedimages_template.yaml:
+```
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8strustedimages
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sTrustedImages
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8strustedimages
+
+        violation[{"msg": msg}] {
+          image := input.review.object.spec.containers[_].image
+          not startswith(image, "docker.io/")
+          not startswith(image, "k8s.gcr.io/")
+          msg := "not trusted image!"
+        }
+```
+Цей опис дозволяє використовувати в кластері лише образи docker.io та k8s.gcr.io. Таким чином образи з інших репозиторіїв  будуть не доступні.
+
+Тепер цей опис обмежень потрібно застосовати до конкретних об’єктів, в нашому випадку до подів, це робиться за допомогою такого деплоймента all_pod_must_have_trusted_images.yaml:
+```
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sTrustedImages
+metadata:
+  name: pod-trusted-images
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+```
+Спочатку застосовуємо шаблон обмежень: `kubectl apply -f k8strustedimages_template.yaml`, потім призначаємо обмеження: `kubectl apply -f all_pod_must_have_trusted_images.yaml`
+
+Разом з gatekeeper та встановленими обмеженнями буде дозволено використовувати образи тільки з описаних репозиторіїв.
