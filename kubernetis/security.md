@@ -2146,3 +2146,82 @@ spec:
 Спочатку застосовуємо шаблон обмежень: `kubectl apply -f k8strustedimages_template.yaml`, потім призначаємо обмеження: `kubectl apply -f all_pod_must_have_trusted_images.yaml`
 
 Разом з gatekeeper та встановленими обмеженнями буде дозволено використовувати образи тільки з описаних репозиторіїв.
+
+
+# Аналіз поведінки ні рівні хосту та на рівні контейнеру
+## Перехоплення системних викликів
+Для того щоб дізнатися які системні виклики виконує програма використовується утиліта strace.
+Наприклад, якщо визвати `strace ls`, то отримаємо такий результат:
+```
+execve("/usr/bin/ls", ["ls"], 0x7ffe3bf4a9b0 /* 32 vars */) = 0
+brk(NULL)                               = 0x606223654000
+arch_prctl(0x3001 /* ARCH_??? */, 0x7ffc74519f70) = -1 EINVAL (Invalid argument)
+mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x78d4b823c000
+access("/etc/ld.so.preload", R_OK)      = -1 ENOENT (No such file or directory)
+openat(AT_FDCWD, "/etc/ld.so.cache", O_RDONLY|O_CLOEXEC) = 3
+newfstatat(3, "", {st_mode=S_IFREG|0644, st_size=20311, ...}, AT_EMPTY_PATH) = 0
+mmap(NULL, 20311, PROT_READ, MAP_PRIVATE, 3, 0) = 0x78d4b8237000
+close(3)                                = 0
+
+…..
+close(1)                                = 0
+close(2)                                = 0
+exit_group(0)                           = ?
++++ exited with 0 +++
+```
+В переліку ми бачимо системні виклики та параметри. Наприклад це шляхи до файлів які викдриваються.
+Інформацію про кожний системний виклик можна подивитися в хелпі https://man7.org/linux/man-pages/dir_all_alphabetic.html
+
+Для аналізу поведінки контейнерів можна використати такий прийом, за допомогою команди можна подивитися перелік запущених контейнерів:
+`sudo crictl ps` (для докеру підійде така команда: `docker ps -a`)
+```
+CONTAINER           IMAGE               CREATED             STATE               NAME                        ATTEMPT             POD ID              POD
+aafa4c677d3bc       48cc7c24253a8       7 weeks ago         Running             calico-kube-controllers     1                   55ab4bb39233c       calico-kube-controllers-dc8cbd649-r6vgp
+….
+3416770087001       2e96e5913fc06       7 weeks ago         Running             etcd                        1                   3da4ff8ec8d77       etcd-crtkubm01
+f711717e3ffbd       847c7bc1a5418       7 weeks ago         Running             kube-scheduler              1                   79e9317b03d32       kube-scheduler-crtkubm01
+```
+Потім за від слідити необхідний процес:
+`ps -aux | grep etcd`
+```
+root       13080  4.7  1.9 11806352 103768 ?     Ssl   2024 3509:03 etcd --advertise-client-urls=https://10.253.24.31:2379 --cert-file=/etc/kubernetes/pki/etcd/server.crt --client-cert-auth=true --data-dir=/var/lib/etcd --experimental-initial-corrupt-check=true --experimental-watch-progress-notify-interval=5s --initial-advertise-peer-urls=https://10.253.24.31:2380 --initial-cluster=crtkubm01=https://10.253.24.31:2380 --key-file=/etc/kubernetes/pki/etcd/server.key --listen-client-urls=https://127.0.0.1:2379,https://10.253.24.31:2379 --listen-metrics-urls=http://127.0.0.1:2381 --listen-peer-urls=https://10.253.24.31:2380 --name=crtkubm01 --peer-cert-file=/etc/kubernetes/pki/etcd/peer.crt --peer-client-cert-auth=true --peer-key-file=/etc/kubernetes/pki/etcd/peer.key --peer-trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt --snapshot-count=10000 --trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt
+root       13167  9.0  8.8 1740996 468936 ?      Ssl   2024 6651:16 kube-apiserver --advertise-address=10.253.24.31 --allow-privileged=true --authorization-mode=Node,RBAC --client-ca-file=/etc/kubernetes/pki/ca.crt --enable-admission-plugins=NodeRestriction --enable-bootstrap-token-auth=true --etcd-cafile=/etc/kubernetes/pki/etcd/ca.crt --etcd-certfile=/etc/kubernetes/pki/apiserver-etcd-client.crt --etcd-keyfile=/etc/kubernetes/pki/apiserver-etcd-client.key --etcd-servers=https://127.0.0.1:2379 --kubelet-client-certificate=/etc/kubernetes/pki/apiserver-kubelet-client.crt --kubelet-client-key=/etc/kubernetes/pki/apiserver-kubelet-client.key --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname --proxy-client-cert-file=/etc/kubernetes/pki/front-proxy-client.crt --proxy-client-key-file=/etc/kubernetes/pki/front-proxy-client.key --requestheader-allowed-names=front-proxy-client --requestheader-client-ca-file=/etc/kubernetes/pki/front-proxy-ca.crt --requestheader-extra-headers-prefix=X-Remote-Extra- --requestheader-group-headers=X-Remote-Group --requestheader-username-headers=X-Remote-User --secure-port=6443 --service-account-issuer=https://kubernetes.default.svc.cluster.local --service-account-key-file=/etc/kubernetes/pki/sa.pub --service-account-signing-key-file=/etc/kubernetes/pki/sa.key --service-cluster-ip-range=10.96.0.0/12 --tls-cert-file=/etc/kubernetes/pki/apiserver.crt --tls-private-key-file=/etc/kubernetes/pki/apiserver.key
+```
+А далі до процесу можна підключитися, та отримати системні виклики які там відбуваються:
+`strace -p 13080`
+```
+strace: Process 13080 attached
+futex(0x1a553a0, FUTEX_WAIT_PRIVATE, 0, NULL…..
+```
+
+
+`strace  -cw ls`
+```
+config  custom-resources.yaml  ddup  exchangelistener-1.0.36.tgz  get_helm.sh  globalsearch  globalsearch-5.0.24.tgz_.zip  gs  gs5  gs_old  logs  test
+% time     seconds  usecs/call     calls    errors syscall
+------ ----------- ----------- --------- --------- ----------------
+ 23.73    0.001189          66        18           mmap
+ 10.57    0.000530         529         1           execve
+  8.53    0.000427          61         7           mprotect
+  8.41    0.000421          46         9           close
+  7.71    0.000386          55         7           openat
+  7.64    0.000383          47         8           newfstatat
+  5.18    0.000260          51         5           read
+  4.95    0.000248          82         3           brk
+  4.17    0.000209          52         4           pread64
+  2.41    0.000121          60         2           getdents64
+  2.23    0.000112          55         2         2 statfs
+  2.19    0.000110         109         1           getrandom
+  2.14    0.000107         107         1           munmap
+  1.99    0.000100          49         2         2 access
+  1.85    0.000093          46         2           ioctl
+  1.75    0.000087          43         2         1 arch_prctl
+  1.10    0.000055          54         1           write
+  0.88    0.000044          44         1           prlimit64
+  0.86    0.000043          43         1           set_tid_address
+  0.85    0.000043          42         1           rseq
+  0.83    0.000042          41         1           set_robust_list
+------ ----------- ----------- --------- --------- ----------------
+100.00    0.005009          63        79         5 total
+```
+
