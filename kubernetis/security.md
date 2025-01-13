@@ -2194,8 +2194,7 @@ strace: Process 13080 attached
 futex(0x1a553a0, FUTEX_WAIT_PRIVATE, 0, NULL…..
 ```
 
-
-`strace  -cw ls`
+У випадку коли немає необхідності аналізувати кожен виклик окремо, можна отримати сумарну інформацію по кількості різних системних викликів, а також профілювання часу виконання. Для цього використовується команда: `strace  -cw ls`. Тоді вивід матиме такий вигляд:
 ```
 config  custom-resources.yaml  ddup  exchangelistener-1.0.36.tgz  get_helm.sh  globalsearch  globalsearch-5.0.24.tgz_.zip  gs  gs5  gs_old  logs  test
 % time     seconds  usecs/call     calls    errors syscall
