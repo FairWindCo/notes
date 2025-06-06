@@ -1,0 +1,39 @@
+name: Generate Wiki PDF
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  generate-wiki-pdf:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+            python-version: '3.13'
+            
+      - name: Create output directory
+        run: mkdir -p output
+        
+      - name: Run diff script
+        run: |
+          export MARKDOWN_FILE="ansible/ansible.md"
+          python .github/scripts/diff_check.py        
+
+      - uses: baileyjm02/markdown-to-pdf@v1
+        with:
+          input_dir: ansible
+          output_dir: output
+                          
+      - name: Upload Wiki PDF Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-manuals-pdfs
+          path: output
