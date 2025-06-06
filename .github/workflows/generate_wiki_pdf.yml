@@ -25,7 +25,8 @@ jobs:
       - name: Run diff script
         run: |
           export MARKDOWN_FILE="ansible/ansible.md"
-          python .github/scripts/diff_check.py        
+          python .github/scripts/diff_check.py
+          python .github/scripts/generate_diff.py > ansible/ansible_diff.md
 
       - uses: baileyjm02/markdown-to-pdf@v1
         with:
@@ -36,4 +37,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: public-manuals-pdfs
-          path: output
+          path: |
+            output/ansible.pdf
+            output/ansible_diff.pdf
