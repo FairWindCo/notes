@@ -37,6 +37,16 @@ jobs:
         run: ls -l ${{ github.workspace }}/output
 
       - name: list
+        run: ls -l ${{ github.workspace }}/ansible
+
+      - name: list
+        run: ls -l ${{ github.workspace }}/
+
+      - name: list
+        run: pwd
+
+
+      - name: list
         run: find ${{ github.workspace }} -name ansible.pdf
 
                           
