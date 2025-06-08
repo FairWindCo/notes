@@ -31,12 +31,12 @@ jobs:
       - uses: baileyjm02/markdown-to-pdf@v1
         with:
           input_dir: ansible
-          output_dir: output
+          output_dir: ${{ github.workspace }}/output
                           
       - name: Upload Wiki PDF Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: public-manuals-pdfs
           path: |
-            output/ansible.pdf
-            output/ansible_diff.pdf
+            ${{ github.workspace }}/output/ansible.pdf
+            ${{ github.workspace }}/output/ansible_diff.pdf
