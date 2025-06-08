@@ -36,6 +36,9 @@ jobs:
       - name: list
         run: ls -l ${{ github.workspace }}/output
 
+      - name: list
+        run: ls -l ${{ github.workspace }}/ansible/output
+
                           
       - name: Upload Wiki PDF Artifacts
         uses: actions/upload-artifact@v4
