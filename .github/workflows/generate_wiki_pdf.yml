@@ -20,7 +20,7 @@ jobs:
             python-version: '3.13'
             
       - name: Create output directory
-        run: mkdir -p output
+        run: mkdir -p ${{ github.workspace }}/output
         
       - name: Run diff script
         run: |
@@ -32,9 +32,15 @@ jobs:
         with:
           input_dir: ansible
           output_dir: output
+
+      - name: list
+        run: ls -l ${{ github.workspace }}/output
+
                           
       - name: Upload Wiki PDF Artifacts
         uses: actions/upload-artifact@v3
         with:
           name: public-manuals-pdfs
-          path: output
+          path: |
+            /${{ github.workspace }}/output/ansible.pdf
+            /${{ github.workspace }}/output/ansible_diff.pdf
