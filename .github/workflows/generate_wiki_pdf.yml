@@ -34,9 +34,7 @@ jobs:
           output_dir: output
                           
       - name: Upload Wiki PDF Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: public-manuals-pdfs
-          path: |
-            ${{ github.workspace }}/output/ansible.pdf
-            ${{ github.workspace }}/output/ansible_diff.pdf
+          path: output
