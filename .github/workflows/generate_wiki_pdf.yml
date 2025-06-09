@@ -7,7 +7,6 @@ on:
 jobs:
   generate-wiki-pdf:
     runs-on: ubuntu-22.04
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -28,26 +27,22 @@ jobs:
           python .github/scripts/diff_check.py
           python .github/scripts/generate_diff.py > ansible/ansible_diff.md
 
+      - name: Run diff script
+        run: |
+          export MARKDOWN_FILE="terraform/terraform.md"
+          python .github/scripts/diff_check.py
+          python .github/scripts/generate_diff.py > terraform/terraform_diff.md
+
+
       - uses: baileyjm02/markdown-to-pdf@v1
         with:
           input_dir: ansible
           output_dir: output/
 
-      - name: list
-        run: ls -l ${{ github.workspace }}/output
-
-      - name: list
-        run: ls -l ${{ github.workspace }}/ansible
-
-      - name: list
-        run: ls -l ${{ github.workspace }}/
-
-      - name: list
-        run: pwd
-
-
-      - name: list
-        run: find ${{ github.workspace }} -name ansible.pdf
+      - uses: baileyjm02/markdown-to-pdf@v1
+        with:
+          input_dir: terraform
+          output_dir: output/
 
                           
       - name: Upload Wiki PDF Artifacts
@@ -56,4 +51,6 @@ jobs:
           name: public-manuals-pdfs
           path: |
             /${{ github.workspace }}/output/ansible.pdf
+            /${{ github.workspace }}/output/terraform.pdf
             /${{ github.workspace }}/output/ansible_diff.pdf
+            /${{ github.workspace }}/output/terraform_diff.pdf
