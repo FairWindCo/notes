@@ -46,7 +46,7 @@ def main():
 
     print("Loading model...")
     model_name = "t5-small"
-    tokenizer = T5Tokenizer.from_pretrained(model_name)
+    tokenizer = T5Tokenizer.from_pretrained(model_name, legacy=False)
     model = T5ForConditionalGeneration.from_pretrained(model_name)
 
     for f in files:
@@ -68,12 +68,16 @@ def main():
             diff_text = "(нема змін у diff для цього файлу)"
 
         # Формуємо та записуємо резюме по commit messages
+        print(commit_msgs)
         summary_commit = summarize_text(commit_msgs, tokenizer, model)
+        print(summary_commit)
         with open(f"summaries/{os.path.basename(f)}_commit_summary.txt", "w", encoding="utf-8") as sf:
             sf.write(summary_commit)
 
         # Формуємо та записуємо резюме по diff
+        print(diff_text)
         summary_diff = summarize_text(diff_text, tokenizer, model)
+        print(summary_diff)
         with open(f"summaries/{os.path.basename(f)}_diff_summary.txt", "w", encoding="utf-8") as sf:
             sf.write(summary_diff)
 
