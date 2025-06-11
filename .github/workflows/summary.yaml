@@ -42,7 +42,7 @@ jobs:
           HEAD: ${{ github.event.inputs.head_commit }}
           FILES: ${{ github.event.inputs.files }}
         run: |
-          python compare_summarize.py "$BASE" "$HEAD" "$FILES"
+          python .github/scripts/compare_summarize.py "$BASE" "$HEAD" "$FILES"
 
       - name: Upload summaries as artifact
         uses: actions/upload-artifact@v4
