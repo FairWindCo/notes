@@ -1,0 +1,49 @@
+name: Compare commits and summarize md files
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_commit:
+        description: 'Base commit/branch'
+        required: true
+        default: 'f18b16864e68c6f53e4f0f2a3cf6e988c89317aa'
+      head_commit:
+        description: 'Head commit/branch'
+        required: true
+        default: 'HEAD'
+      files:
+        description: 'Comma-separated list of .md files to analyze'
+        required: true
+        default: 'ansible/ansible.md'
+
+jobs:
+  compare_and_summarize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install dependencies
+        run: |
+          pip install transformers torch
+
+      - name: Run comparison and summarization
+        env:
+          BASE: ${{ github.event.inputs.base_commit }}
+          HEAD: ${{ github.event.inputs.head_commit }}
+          FILES: ${{ github.event.inputs.files }}
+        run: |
+          python .github/scripts/compare_summarize.py "$BASE" "$HEAD" "$FILES"
+
+      - name: Upload summaries as artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: md_summaries
+          path: summaries/
