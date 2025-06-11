@@ -21,17 +21,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-version: 3.9
+          python-version: '3.9'
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install transformers torch
 
       - name: Run comparison and summarization
@@ -40,10 +42,10 @@ jobs:
           HEAD: ${{ github.event.inputs.head_commit }}
           FILES: ${{ github.event.inputs.files }}
         run: |
-          python .github/scripts/compare_summarize.py "$BASE" "$HEAD" "$FILES"
+          python compare_summarize.py "$BASE" "$HEAD" "$FILES"
 
-      - name: Upload summaries as artifacts
-        uses: actions/upload-artifact@v3
+      - name: Upload summaries as artifact
+        uses: actions/upload-artifact@v4
         with:
           name: md_summaries
           path: summaries/
