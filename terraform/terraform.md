@@ -795,3 +795,210 @@ output "web_dns_name" {
 В цьому пркладі: default_tags - що задані для provider будуть застосовані для всіх ресурсів, що створені цим провайдером. Назва групи залежить від ${aws_launch_template.web_server.latest_version}, і тим самим при зміні версії темплейта, буде автоматично перестворено нову групу.
 При цьому стара група буде знищена лише після того, як нова група стане повністю функціональна. Таким чином, наприклад якщо змінити скрпит запуску, то автоматично зміниться версія темплейта запсуку, що призведе для створення нової групи маштабування. Всі сервери коли вони піднімуться зарєєструються в таргет групі.
 Параметр deregistration_delay, вказує на необхідність зачекати з видаленням старих серверів протягом вказаного часу (а не образу після того, як з'явиться новий сервер).
+
+# Змінні
+Гарної практики є винесення сього, що може бути змінено в окремі змінні для відділеня опису ресурсів від можливих змін. Наприклад:
+```
+variable "region" {
+    description = "Enter region for deploy security group"
+}
+
+variable "cidr_block" {
+    description = "Enter CIDR block address"
+    type = string
+    default = "0.0.0.0/0"
+}
+variable "open_ports" {
+    description = "Enter ports"
+    type = list
+    default = ["80", "443"]
+}
+variable "common_tags" {
+    type = map
+    default = {
+       Owner = "User owner name"
+    }
+}
+
+
+provider "aws" {
+access_key = "KEY"
+secret_key = "SECRET"
+region     = var.region
+default_tags = vars.common_tags
+}
+
+
+resource "aws_security_group" "my-sec-web" {
+  name = "my-security-web-rule"
+  vpc_id = aws_default_vpc.default.id
+  dynamic "ingress" {
+    for_each = vars.open_ports
+    content {
+        from_port         = ingress.value
+        to_port           = ingress.value
+        protocol          = "tcp"
+        cidr_blocks       = [var.cidr_block]       
+    }
+  }
+  egress {
+    from_port = 0
+    to_port = 65535
+    protocol = "-1"
+    cidr_blocks = [var.cidr_block]
+  }
+  tags = var.common_tags, {
+    Name = "Security Policy for web server"
+  }
+}
+```
+В наведеному прикладі існує змінна region, для якої не задано значення, тому тераформ завжди запитає користувача про її значення та змусить користувача його заповнити. Таким чином при застосуванні буде вводитися регіон де буде працювати тераформ.
+Гарана практика всі змінні виносити в окремий файл variables.tf. description - виводиться при запиті значення змінної.
+Крім того, змінна може мати значення за замовчуванням default, але тоді вона не буде примусово запистуватися при запуску, а для її зміни знадобиться спеціальний виклик.
+Існують типи string, list, map, bool - вони не є обов'язвими для того, щоб їх вказувати, тераформ сам визначить там зі значення default, проте гарна практика в тому, що якщо ви тип вказали то терафрм перевірть, що вказаний тип співпадає з введеним, що дуже корисно для правильного заповнення значень.
+Є можливість при застосуванні змінної типу map, об'єднання значнень зі змінної з додатковими ключами, як у прикладі з тегами.
+Є також такого плану трюк:
+`tags = merge(var.common_tags, {Name = "${var.common_tags["Enviriament"]} Security Policy for web server" })` і тут ім'я фомується прямо зі значенням яке береться з того є самого словника ключів.
+
+## Автозаповнення змінних
+Значення змінних можна змінити з командної строки, наприклад задати нове значення для регіону:
+`terraform apply -var="region=us-east-1"` там можна змінити будь-які змінні. Ключ "-var", можна застосувати кілька разів, щоб змінити кілька змінних.
+Також значення змінних можуть бути задані через змінні оточення:
+```
+export TF_VARS_region=us-east-2
+terraform apply
+```
+Ще один варіант їх задати створити файл terraform.tfvars з необхідними значеннями в форматі "назва змінної" = "значення", по одному на строку:
+```
+region=us-east-2
+```
+Файл terraform.tfvars має більший преорітет ніж значення задані в default. Інша можливість створити файли *.auto.tfvars, наприклад
+dev.auto.tfvars та prod.auto.tfvars. Якщо файлу terraform.tfvars не існує, а є лише один файлтипу *.auto.tfvars то буде застосовано його. Якщо файлів більше одного - буде помилка, що б вибрати файл потрібно застосувати команду `terraform apply -var=prod.auto.tfvars`. Ця ж каманда дозволяє застосувати для змінних будь який файл ".tfvars".
+Детально тут https://developer.hashicorp.com/terraform/language/values/variables
+
+## Локальні змінні
+Припустимо потрібно створити комбінацію з інших змінних:
+  `Name = "${var.var_1} - ${var.name_2}"`
+Тоді якщо такий фрагмент буде використаний кілька разів, то його можна оптимізувати через створення локальної змінної:
+```
+locals {
+   full_name = "${var.var_1} - ${var.name_2}"
+}
+....
+    Name = local.full_name
+....
+
+```
+Важливо відмітити, що локальні змінні створюються в блоці "locals", а застосовуються через ім'я "local".
+Крім того в локальну змінну можна занести значення з data source.
+```
+locals {
+   az_list = data.aws_availability_zones.available.names
+   az_list_value = join(",",data.aws_availability_zones.available.names)
+   location = "Zones: ${local.az_list_value} in region: ${data.region.current.description}"
+}
+```
+Якщо значення az_list це список, то az_list_value це вже строка (бо вона з'єднана). Також можливо посилатися з одних локальних змынних на інші.
+
+# Запуск локлаьних команд на хості тераформа
+Під час створення ресурсів іноді виникає задача запустити локально процесс, наприклад щоб згенерувати ключі, для цього створюємо ресурс:
+```
+resource "null_resource" "command1" {
+ provisioner "local-exec" {
+  command = "echo "Test string" > local_file.txt
+ }
+}
+resource "null_resource" "command2" {
+  provisioner "local-exec" {
+    command = "Get-Date > completed.txt"
+    interpreter = ["PowerShell", "-Command"]
+  }
+}
+resource "null_resource" "command3" {
+  provisioner "local-exec" {
+    command = "echo $FOO $BAR $BAZ >> env_vars.txt"
+
+    environment = {
+      FOO = "bar"
+      BAR = 1
+      BAZ = "true"
+    }
+  }
+}
+
+resource "aws_instance" "web" {
+  # ...
+
+  provisioner "local-exec" {
+    command = "echo $FOO $BAR $BAZ >> env_vars.txt"
+
+    environment = {
+      FOO = "bar"
+      BAR = 1
+      BAZ = "true"
+    }
+  }
+}
+```
+Основний момент, що ці команди виконуються проте не їх вивід не можу бути отриманий для подальшого використання. Якщо потрібно використати певний шел чи наприклад python, можна застосувати параметр interpreter де вказується інтрепретатор та його аргументи.
+Також можливо задати для команди змінні оточення через параметр environment. Також частину визову команд можна розмістити в іншому ресурі, що створююється. Також на null_resource можна накласти залежності 
+https://developer.hashicorp.com/terraform/language/resources/provisioners/local-exec
+
+# Генерація паролей та їх зберігання
+```
+resource "random_string" "rds_passowrd" {
+    length = 12
+    special = true
+    override_special = "@#!"
+}
+
+resource "aws_ssm_parameter" "rds_password" {
+    name = "/prod/mysql"
+    description = "Master password for MySQl"
+    type = "SecureString"
+    value = random_string.rds_passowrd.result
+}
+```
+Цей фрагмент згенерує пароль через ресурс random_string в якому вказано довжина пароля та спеціальні символи які можуть бути в ньому.
+Далі в Амазоні створюється захищений ресурс де зберігається пароль.
+Загалом значення з aws_ssm можна дістати:
+```
+data "aws_ssm_parameter" "rds_password" {
+    name = "/prod/mysql"
+    depends-on = [aws_ssm_parameter.rds_password]
+}
+output "rds_password" {
+  value = data.aws_ssm_parameter.rds_password.value
+}
+```
+Наприклад це може бути застосовано для створення БД:
+```
+resource "aws_db_instance" "default" {
+  allocated_storage    = 10
+  db_name              = "mydb"
+  engine               = "mysql"
+  engine_version       = "8.0"
+  instance_class       = "db.t3.micro"
+  username             = "admin"
+  password             = data.aws_ssm_parameter.rds_password.value
+  parameter_group_name = "default.mysql8.0"
+  skip_final_snapshot  = true
+}
+```
+https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/db_instance
+Проте при застосуванні такого скрипту буде завжди застосовуватися зміна пароля.
+
+```
+resource "random_string" "rds_passowrd" {
+    length = 12
+    special = true
+    ovveride_special = "@#!"
+    keepers = {
+      keeper1 = var.var_1
+      keeper2 = var.var_2
+    }
+}
+```
+Особливість цього блоку, що він завжди буде створюватися заново. І його значення не зберігається.
+Можна вказати перелік змінних в keepers, тоді перестворення такого пароля буде лише якщо будь-яка зі змінних вказаних в keepers зміниться.
+https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/string#keepers-1
