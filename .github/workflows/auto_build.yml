@@ -1,0 +1,173 @@
+name: Build TltkModemPluginInstaller
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      MISSION_PLANNER_SOURCE_PATH: D:\a\TeletacticaPlugin\TeletacticaPlugin\MissionPlanner
+      CSPROJ_PATH: TltkModemPlugin.csproj
+      VDPROJ_PATH: TltkModemPluginInstaller.vdproj
+      OUTPUT_DIR: Debug
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x86
+
+      - name: Install .NET Framework 4.7.2 Targeting Pack (if missing)
+        run: |
+          $regPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SDKs\NETFXSDK\4.7.2"
+          if (-not (Test-Path $regPath)) {
+            Invoke-WebRequest `
+              -Uri "https://download.microsoft.com/download/5/E/8/5E862C62-791A-4DA5-81A7-0A9E2385E14C/NDP472-DevPack-ENU.exe" `
+              -OutFile "ndp472.exe"
+            Start-Process .\ndp472.exe -ArgumentList "/quiet", "/norestart" -Wait
+          }
+        shell: pwsh
+
+      - name: Find MSBuild path from Visual Studio
+        id: msbuild-path
+        run: |
+          $msbuild = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -products * -requires Microsoft.Component.MSBuild `
+            -find MSBuild\**\Bin\MSBuild.exe `
+            -latest
+          echo "MSBUILD_PATH=$msbuild" | Out-File -FilePath $env:GITHUB_ENV -Append
+        shell: pwsh
+      
+      - name: Clone target repository with specific commit
+        run: |
+          git clone --recurse https://github.com/ArduPilot/MissionPlanner.git MissionPlanner
+          cd MissionPlanner
+          git checkout c9261662a5cbc845f05b1a5d292b6bf599bcbc5f
+          echo "MISSION_PLANNER_SOURCE_PATH=%cd%" >> $GITHUB_ENV      
+
+      - name: Locate VSIXInstaller.exe with vswhere
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+              throw "vswhere.exe not found"
+          }
+          
+          $vsInstallDir = & $vswhere -products * -requires Microsoft.Component.MSBuild -property installationPath -latest
+          if (-not $vsInstallDir) {
+              throw "Visual Studio installation path not found"
+          }
+          
+          $vsixPath = Join-Path $vsInstallDir "Common7\IDE\VSIXInstaller.exe"
+          if (-not (Test-Path $vsixPath)) {
+                throw "VSIXInstaller.exe not found at: $vsixPath"
+          }
+          
+          "VSIX_INSTALLER_PATH=$vsixPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+
+      - name: Add current project to target solution
+        run: |
+          $solutionFile = Get-ChildItem -Path ${env:MISSION_PLANNER_SOURCE_PATH} -Filter "MissionPlanner.sln" | Select-Object -First 1
+                    
+          $projectFile = Get-ChildItem -Path "." -Filter "TltkModemPlugin.csproj" -Recurse | Select-Object -First 1
+          
+          if ($solutionFile -and $projectFile) {
+               "SOLUTION_PATH=$($solutionFile.FullName)" | Add-Content -Path $env:GITHUB_ENV
+               "PROJECT_PATH=$($projectFile.FullName)"   | Add-Content -Path $env:GITHUB_ENV
+               "SOLUTION_NAME=$($solutionFile.BaseName)" | Add-Content -Path $env:GITHUB_ENV
+          
+          
+               Write-Host "Found solution: $($solutionFile.FullName)"
+               Write-Host "Found project: $($projectFile.FullName)"
+               Write-Host "Environment variables set successfully"
+          
+               Write-Host "Adding project $($projectFile.FullName) to solution $($solutionFile.FullName)"
+               dotnet sln $solutionFile.FullName add $projectFile.FullName
+          } else {
+            Write-Error "Could not find solution or project file"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Restore solution
+        run: |
+          dotnet restore ${env:SOLUTION_PATH}
+        shell: pwsh
+
+
+      - name: Build solution
+        run: |
+          dotnet build ${env:SOLUTION_PATH} --configuration Debug
+        shell: pwsh
+
+      - name: Download VS Installer Projects extension
+        shell: cmd
+        run: |
+          set VSIX_URL=https://marketplace.visualstudio.com/_apis/public/gallery/publishers/Microsoft/extension/VisualStudioInstallerProjects/2022.5.0/vsix
+          curl -L %VSIX_URL% -o installer.vsix
+      
+      - name: Install VSIX extension without /admin
+        shell: cmd
+        run: |
+          "%VSIX_INSTALLER_PATH%" /quiet /norestart installer.vsix
+      
+      - name: Build installer project (.vdproj)
+        shell: pwsh
+        run: msbuild $env:VDPROJ_PATH
+      
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TltkModemPluginInstaller
+          path: ${{ env.OUTPUT_DIR }}\TltkModemPluginInstaller-*.msi
+
+
+      - name: Install System.Buffers with lib
+        run: nuget install System.Buffers -Version 4.5.1  -OutputDirectory packages
+
+      - name: Install System.Drawing
+        run: nuget install System.Drawing.Common -Version 4.5.1 -OutputDirectory packages
+
+      - name: see lib
+        run: |
+          dir D:\a\TeletacticaPlugin\TeletacticaPlugin\packages\
+          dir D:\a\TeletacticaPlugin\TeletacticaPlugin\packages\System.Buffers.4.5.1\lib\net461
+          dir D:\a\TeletacticaPlugin\TeletacticaPlugin\packages\System.Drawing.Common.4.5.1\lib\net461
+
+
+      - name: Override System.Buffers.dll with runtime version
+        run: |
+          mkdir TeletacticaPlugin\bin\Debug
+          copy D:\a\TeletacticaPlugin\TeletacticaPlugin\packages\System.Buffers.4.5.1\lib\net461\System.Buffers.dll TeletacticaPlugin\bin\Debug\
+
+      - name: HACK^ Remove invalid .resx
+        run: del "MissionPlanner\ExtLibs\mono\mcs\class\System.Windows.Forms\resources\keyboards.resx"
+      - name: Exclude broken XAML from compilation
+        run: |
+          powershell -Command "& {
+               $csproj = 'TltkModemPlugin.csproj'
+               $content = Get-Content $csproj
+               $filtered = $content -replace '<Compile Include=".*?DefaultTemplate\.11\.1\.xaml".*?/>', ''
+               $filtered | Set-Content $csproj
+          }"
+
+      - name: Restore project
+        run: |
+          msbuild ${env:PROJECT_PATH} -t:restore,build -p:RestorePackagesConfig=true /p:ReferencePath="D:\a\TeletacticaPlugin\TeletacticaPlugin\packages\System.Drawing.Common.4.5.1\lib\net461"
+        shell: pwsh
+
+
+
+      - name: Build project
+        run: |
+          msbuild ${env:PROJECT_PATH} /p:Configuration=Debug /p:ReferencePath="D:\a\TeletacticaPlugin\TeletacticaPlugin\override"
+        shell: pwsh

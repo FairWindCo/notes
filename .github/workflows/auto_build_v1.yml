@@ -1,0 +1,105 @@
+name: Build TltkModemPluginInstaller
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      MISSION_PLANNER_SOURCE_PATH: D:\a\TeletacticaPlugin\TeletacticaPlugin\MissionPlanner
+      CSPROJ_PATH: TltkModemPlugin.csproj
+      VDPROJ_PATH: TltkModemPluginInstaller.vdproj
+      OUTPUT_DIR: Debug
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Clone https://github.com/ArduPilot/MissionPlanner
+        uses: GuillaumeFalourd/clone-github-repo-action@v2.3
+        with:
+          owner: 'ArduPilot'
+          repository: 'MissionPlanner'
+          branch: 'master'
+          submodule: true
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+        with:
+          msbuild-architecture: x86
+
+      - name: Locate VSIXInstaller.exe with vswhere
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+              throw "vswhere.exe not found"
+          }
+          
+          $vsInstallDir = & $vswhere -products * -requires Microsoft.Component.MSBuild -property installationPath -latest
+          if (-not $vsInstallDir) {
+              throw "Visual Studio installation path not found"
+          }
+          
+          $vsixPath = Join-Path $vsInstallDir "Common7\IDE\VSIXInstaller.exe"
+          if (-not (Test-Path $vsixPath)) {
+                throw "VSIXInstaller.exe not found at: $vsixPath"
+          }
+          
+          "VSIX_INSTALLER_PATH=$vsixPath" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Restore NuGet packages for Plugin
+        shell: cmd
+        run: nuget restore %CSPROJ_PATH%
+
+
+      - name: Restore packages for MissionPlanner
+        shell: cmd
+        run: dotnet restore %MISSION_PLANNER_SOURCE_PATH%\MissionPlanner.sln --runtime net472
+
+
+      - name: Restore packages for MissionPlanner Lib
+        shell: cmd
+        run: dotnet restore %MISSION_PLANNER_SOURCE_PATH%\MissionPlannerLib.sln --runtime net472
+      
+      #      - name: Restore NuGet packages for MissionPlanner
+      #        shell: cmd
+      #        run: nuget restore %MISSION_PLANNER_SOURCE_PATH%\MissionPlanner.csproj
+      
+      #      - name: Restore NuGet packages for MissionPlanner Core
+      #        shell: cmd
+      #        run: nuget restore %MISSION_PLANNER_SOURCE_PATH%\MissionPlannerCore.csproj
+      
+      #      - name: Restore NuGet packages for MissionPlanner Lib
+      #        shell: cmd
+      #        run: nuget restore %MISSION_PLANNER_SOURCE_PATH%\MissionPlannerLib.csproj
+
+      - name: Build plugin project (.csproj)
+        shell: pwsh
+        run: msbuild $env:CSPROJ_PATH /p:Configuration=Debug
+
+      - name: Download VS Installer Projects extension
+        shell: cmd
+        run: |
+          set VSIX_URL=https://marketplace.visualstudio.com/_apis/public/gallery/publishers/Microsoft/extension/VisualStudioInstallerProjects/2022.5.0/vsix
+          curl -L %VSIX_URL% -o installer.vsix
+
+      - name: Install VSIX extension without /admin
+        shell: cmd
+        run: |
+          "%VSIX_INSTALLER_PATH%" /quiet /norestart installer.vsix
+
+      - name: Build installer project (.vdproj)
+        shell: pwsh
+        run: msbuild $env:VDPROJ_PATH
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TltkModemPluginInstaller
+          path: ${{ env.OUTPUT_DIR }}\TltkModemPluginInstaller-*.msi

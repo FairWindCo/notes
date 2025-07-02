@@ -85,7 +85,7 @@ export AWS_DEFAULT_REGION=eu-central-1
 Наприклад для ресурсу можна задати теги:
 ```
 resource "aws_instance" "web" {
-  ami           = data.aws_ami.ubuntu.id
+  ami           = "ami-03250b0e01c28d196"
   instance_type = "t3.micro"
 
   tags = {
@@ -1002,3 +1002,171 @@ resource "random_string" "rds_passowrd" {
 Особливість цього блоку, що він завжди буде створюватися заново. І його значення не зберігається.
 Можна вказати перелік змінних в keepers, тоді перестворення такого пароля буде лише якщо будь-яка зі змінних вказаних в keepers зміниться.
 https://registry.terraform.io/providers/hashicorp/random/latest/docs/resources/string#keepers-1
+
+# Умови та цикли
+## Умовні вирази
+
+В тераформ можливо викорстання умовних виразів значення яких буде визначатися за умовами. Це тернарний оператор з мов програмування.
+`X = УМОВА ? ЗНАЧЕННЯ_ЯКЩО_УМОВА_ДОСТОВІРНА : ЗНАЧЕННЯ_ЯКЩО_УМОВА_ХИБНА`
+В умовах доступні наступні оператори "==" - точно дорівнює, "!=" - точно не дорівнює, ">", "<", "<=", ">=" - порівняння (більше\меньше), а також булеві оператори "&&" - "та", "||" - "або" та "!" - "ні".
+Це можна використати наступним чином:
+```
+variable "env" {
+    default = "prod"
+}
+
+resource "aws_instance" "api_server_machine" {
+  ami = "ami-03250b0e01c28d196"
+  instance_type = (vars.env == "prod" ? "t2.large" :"t2.micro")
+}
+```
+Тоді різний тип ресурсу буде використано залежно від значення змінної env, що визначить в якому розгортається ресурс. А значення зміної можна задати або в файлі або при необхідності змінювати при запуску тераформ.
+Інший фокус це умовне створення ресурсів:
+```
+variable "env" {
+    default = "prod"
+}
+
+resource "aws_instance" "api_server_machine" {
+  count = (vars.env == "dev" ? 1 :0)
+  ami = "ami-03250b0e01c28d196"
+  instance_type = (vars.env == "prod" ? "t2.large" :"t2.micro")
+}
+```
+В цьому прикладі ресурс буде ствоерно лише коли значення env дорівнює "dev".
+## Пошук значень
+Поглянемо на такий код:
+```
+variable "ec2_size" {
+    "prod" = "t2.large"
+    "staging" = "t2.medium"
+    "dev" = "t2.micro"
+}
+
+resource "aws_instance" "api_server_machine" {
+  ami = "ami-03250b0e01c28d196"
+  instance_type = lookup(vars.ec2_size, "t2.micro")
+}
+```
+Тут значення instance_type, вибирається зі словника ec2_size, який зберігає пари ключ - значеннями, здійснюється пошук ключа "t2.micro".
+Функція lookup здійснює пошук значення в словнику та повертає значення, якщо значення немає:
+X = lookup(СЛОВНИК, КЛЮЧ_ДЛЯ_ПОШУКУ)
+Наприклад це можна застосувати так:
+```
+variable "env" {
+    default = "prod"
+}
+
+variable "ec2_size" {
+    "prod" = "t2.large"
+    "staging" = "t2.medium"
+    "dev" = "t2.micro"
+}
+
+resource "aws_instance" "api_server_machine" {
+  count = (vars.env == "dev" ? 1 :0)
+  ami = "ami-03250b0e01c28d196"
+  instance_type = lookup(vars.ec2_size,vars.env)
+}
+
+resource "aws_instance" "web_server_machine" {
+  count = (vars.env == "dev" ? 1 :0)
+  ami = "ami-03250b0e01c28d196"
+  instance_type = (vars.env == "prod" ? vars.ec2_size["prod"] :vars.ec2_size["dev"])
+}
+```
+Тут сервер створюється залежно від значення змінної "env", а також розмір сервера вибереться зі словника.
+Також можна застосовувати отримання значення зі словника, як при створенні ресурсу "web_server_machine".
+
+# Цикли та коунтери
+
+## Count
+Наприклад є задача створити перелів користувачів та створити кілька сервісів:
+```
+variable "ec2_users" {
+    default = ["user1", "user2", "user3"]
+}
+
+
+resource "aws_iam_user" "users" {
+  count = length(vars.ec2_users)
+  name = element(vars.ec2_users, count.index)
+}
+
+resource "aws_instance" "web" {
+  count = 5
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "Server ${count.index + 1}"
+  }
+}
+
+output users_id {
+   value = aws_iam_user.users[*].id
+}
+```
+Для розв'язання цієї задачі використоується count, в першому випадку count задає кількість користувачів, що треба створити. Для того, щоб не визначати кількість вручну, використана функція length, що визначає довжину списку користувачів.
+Далі для отримання імені користувача зі списку використана функція element, що дістає зі списку vars.ec2_users користувачів по одному для кожного значення індексу "count.index".
+В другій частині створюється 5 aws_instance, для кожного тега використано значення count.index, бо значення відраховуються від 0, його потрібно збільшити на 1 для зручності.
+В кінці зроблено вивід всіх ідентифікаторів користувачів.
+## for
+Ось така штука може сгенерувати список значень на основі створених користувачів:
+```
+output output_created_users {
+   value = [
+      for user in aws_iam_user.users:
+      "User name= ${user.name} has ARN=${user.arn}
+   ]
+}
+
+output output_created_users_map {
+   value = {
+      for user in aws_iam_user.users:
+      user.name => user.arn
+   }
+}
+```
+Другий вивід сгенерує словник з імен та їх АРН.
+Варіант це отримання значень тільки за умовою:
+```
+output output_created_users {
+   value = [
+       for user in aws_iam_user.users:
+       user.name
+       if length(user.name) > 4 
+]
+}
+```
+В результуючий список потраплять тільки імена користувачів з довжиною імені більше 4.
+
+# Використання кількох провайдерів
+В нашому файлі конфігурації можна використати кілька провайдерів одночасно. Проте в такому випадку всі, крім того, що буде використаний за замовчуванням повинні мати параметр alias.
+В такому випадку всі ресурси для яких не задано параметр provider, використовують той що не маж alias,  а коли він заданий то використовується той, що вказаний.
+```
+provider "aws" {
+   region     = "ca-central-1"
+}
+
+provider "aws" {
+   region     = "us-east-1"
+   alias = "usa"
+}
+
+
+resource "aws_instance" "web_server_machine1" {
+  ami = "ami-03250b0e01c28d196"
+  instance_type = "t2.micro"
+}
+
+resource "aws_instance" "web_server_machine1" {
+  ami = "ami-03250b0e01c28d196"
+  instance_type = "t2.micro"
+  provider = aws.usa
+}
+```
+В прикладі web_server_machine1 буде стоврено в регіоні "ca-central-1", а web_server_machine1, буде створено в регіоні us-east-1, це буде зроблено одночасно.
+Параметр provider, може застосовуватися не тільки для ресурсів, а й для дата блоків.
+
+# Remote State
